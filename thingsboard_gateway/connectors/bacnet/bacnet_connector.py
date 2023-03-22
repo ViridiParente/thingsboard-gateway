@@ -33,6 +33,7 @@ from bacpypes.pdu import Address, GlobalBroadcast, LocalBroadcast, LocalStation,
 
 from thingsboard_gateway.connectors.connector import Connector, log
 from thingsboard_gateway.connectors.bacnet.bacnet_utilities.tb_gateway_bacnet_application import TBBACnetApplication
+from thingsboard_gateway.connectors.bacnet.bacnet_utilities.tb_gateway_misty_application import TBMistyApplication
 
 
 class BACnetConnector(Thread, Connector):
@@ -47,7 +48,10 @@ class BACnetConnector(Thread, Connector):
         self.__device_indexes = {}
         self.__devices_address_name = {}
         self.__gateway = gateway
-        self._application = TBBACnetApplication(self, self.__config)
+        if self.__config.get('misty'):
+            self._application = TBMistyApplication(self, self.__config)
+        else:
+            self._application = TBBACnetApplication(self, self.__config)
         self.__bacnet_core_thread = Thread(target=run, name="BACnet core thread", daemon=True,
                                            kwargs={"sigterm": None, "sigusr1": None})
         self.__bacnet_core_thread.start()
