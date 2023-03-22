@@ -149,7 +149,7 @@ class ModbusConnector(Connector, Thread):
         while not self.__stopped:
             self.__thread_manager()
 
-            sleep(.001)
+            sleep(2)
 
     @staticmethod
     def __configure_and_run_slave(config):
@@ -345,7 +345,7 @@ class ModbusConnector(Connector, Thread):
                 if device.config.get(TYPE_PARAMETER) == 'serial':
                     self.lock.release()
 
-            sleep(.001)
+            sleep(1)
 
     def __connect_to_current_master(self, device=None):
         # TODO: write documentation
@@ -656,4 +656,4 @@ class ModbusConnector(Connector, Thread):
                         self.__send_result(converted_data)
                         self.in_progress = False
                 else:
-                    sleep(.001)
+                    sleep(1)

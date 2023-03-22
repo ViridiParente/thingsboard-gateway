@@ -59,7 +59,7 @@ class TBUpdater(Thread):
                 self.check_for_new_version()
                 self.__previous_check = time()
             else:
-                sleep(1)
+                sleep(60 * 60)
 
     def stop(self):
         self.__stopped = True

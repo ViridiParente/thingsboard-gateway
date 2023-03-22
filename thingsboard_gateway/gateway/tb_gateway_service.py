@@ -364,7 +364,7 @@ class TBGatewayService:
                     self.__rpc_requests_in_progress = new_rpc_request_in_progress
                 else:
                     try:
-                        sleep(0.2)
+                        sleep(2)
                     except Exception as e:
                         log.exception(e)
                         break
@@ -821,7 +821,7 @@ class TBGatewayService:
                             self.__send_data_pack_to_storage(data, connector_name)
 
                 else:
-                    sleep(0.2)
+                    sleep(1)
             except Exception as e:
                 log.error(e)
 
@@ -1108,7 +1108,7 @@ class TBGatewayService:
                 args = self.__rpc_processing_queue.get()
                 self.__send_rpc_reply(*args)
             else:
-                sleep(.1)
+                sleep(1)
 
     def __send_rpc_reply(self, device=None, req_id=None, content=None, success_sent=None, wait_for_publish=None,
                          quality_of_service=0):
