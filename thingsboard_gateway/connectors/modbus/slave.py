@@ -68,21 +68,16 @@ class Slave(Thread):
 
         self.callback = kwargs['callback']
 
-        self.last_polled_time = None
         self.daemon = True
 
         self.start()
 
     def timer(self):
-        self.callback(self)
-        self.last_polled_time = time()
-
         while True:
-            if time() - self.last_polled_time >= self.poll_period:
-                self.callback(self)
-                self.last_polled_time = time()
-
-            sleep(0.001)
+            before = time()
+            self.callback(self)
+            duration = time() - before
+            sleep(self.poll_period - duration)
 
     def run(self):
         self.timer()

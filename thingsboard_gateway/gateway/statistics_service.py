@@ -81,7 +81,7 @@ class StatisticsService(Thread):
 
                 self._last_poll = time()
 
-            sleep(.2)
+            sleep(2)
 
     class CollectStatistics:
         def __init__(self, start_stat_type, end_stat_type=None):

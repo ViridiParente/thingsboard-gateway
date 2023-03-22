@@ -183,7 +183,7 @@ class TBClient(threading.Thread):
         while not self.__stopped:
             try:
                 if not self.__stopped:
-                    sleep(.2)
+                    sleep(5)
                 else:
                     break
             except KeyboardInterrupt:
