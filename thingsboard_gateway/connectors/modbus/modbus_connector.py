@@ -58,6 +58,7 @@ from pymodbus.device import ModbusDeviceIdentification
 from pymodbus.version import version
 from pymodbus.datastore import ModbusSlaveContext, ModbusServerContext
 from pymodbus.datastore import ModbusSparseDataBlock
+from serial.rs485 import RS485Settings
 
 from thingsboard_gateway.connectors.connector import Connector, log
 from thingsboard_gateway.connectors.modbus.constants import *
@@ -384,7 +385,9 @@ class ModbusConnector(Connector, Thread):
                                                           'connection_attempt'] + 1
                 device.config['last_connection_attempt_time'] = current_time
                 log.debug("Modbus trying connect to %s", device)
-                device.config['master'].connect()
+                if device.config['master'].connect():
+                    if device.config['rs485']:
+                        device.config['master'].socket.rs485_mode = RS485Settings()
 
                 if device.config['connection_attempt'] == connect_attempt_count:
                     log.warn("Maximum attempt count (%i) for device \"%s\" - encountered.", connect_attempt_count,

@@ -45,6 +45,7 @@ class Slave(Thread):
             'stopbits': kwargs.get('stopbits', Defaults.Stopbits),
             'bytesize': kwargs.get('bytesize', Defaults.Bytesize),
             'parity': kwargs.get('parity', Defaults.Parity),
+            'rs485': kwargs.get('rs485', False),
             'strict': kwargs.get('strict', True),
             'retries': kwargs.get('retries', 3),
             'connection_attempt': 0,
