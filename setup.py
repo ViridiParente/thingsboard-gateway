@@ -57,13 +57,9 @@ setup(
         'cryptography',
         'jsonpath-rw',
         'regex',
-        'pip',
         'PyYAML',
         'simplejson',
         'requests',
-        'PyInquirer',
-        'pyfiglet',
-        'termcolor',
         'grpcio<=1.43.0',
         'protobuf',
         'cachetools'
