@@ -386,8 +386,12 @@ class ModbusConnector(Connector, Thread):
                 device.config['last_connection_attempt_time'] = current_time
                 log.debug("Modbus trying connect to %s", device)
                 if device.config['master'].connect():
-                    if device.config['rs485']:
-                        device.config['master'].socket.rs485_mode = RS485Settings()
+                    if device.config['type'] == 'serial':
+                        if device.config['rs485']:
+                            device.config['master'].socket.rs485_mode = RS485Settings()
+                        device.config['master'].socket.rstcts = device.config['rtscts']
+                        device.config['master'].socket.dsrdtr = device.config['dsrdtr']
+                        device.config['master'].socket.xonxoff = device.config['xonxoff']
 
                 if device.config['connection_attempt'] == connect_attempt_count:
                     log.warn("Maximum attempt count (%i) for device \"%s\" - encountered.", connect_attempt_count,
