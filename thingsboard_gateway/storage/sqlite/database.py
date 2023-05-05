@@ -112,9 +112,9 @@ class Database(Thread):
             self.db.rollback()
             log.exception(e)
 
-    def delete_data(self, ts):
+    def delete_data(self, ts_low, ts_high):
         try:
-            data = self.db.execute('''DELETE FROM messages WHERE timestamp >= ? ;''', [ts])
+            data = self.db.execute('''DELETE FROM messages WHERE timestamp >= ? AND timestamp < ? ;''', [ts_low, ts_high])
             return data
         except Exception as e:
             self.db.rollback()
