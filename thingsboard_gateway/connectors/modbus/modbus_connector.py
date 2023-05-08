@@ -389,7 +389,7 @@ class ModbusConnector(Connector, Thread):
                     if device.config['type'] == 'serial':
                         if device.config['rs485']:
                             device.config['master'].socket.rs485_mode = RS485Settings()
-                        device.config['master'].socket.rstcts = device.config['rtscts']
+                        device.config['master'].socket.rtscts = device.config['rtscts']
                         device.config['master'].socket.dsrdtr = device.config['dsrdtr']
                         device.config['master'].socket.xonxoff = device.config['xonxoff']
 
