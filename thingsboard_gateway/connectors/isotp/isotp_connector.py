@@ -178,7 +178,7 @@ class IsotpConnector(Connector, Thread):
         pass # TODO
 
 
-class Device:
+class Device(asyncio.Protocol):
     connector: IsotpConnector
     name: str
     type: str
@@ -219,6 +219,7 @@ class Device:
 
     def do_poll(self, poll_config: PollConfig) -> None:
         assert self.transport is not None
+        log.debug('[%s] Polling: %s', self.connector.get_name(), poll_config.data.hex(' '))
         self.transport.write(poll_config.data)
 
         if poll_config.period is not None:
@@ -226,8 +227,8 @@ class Device:
                                            self.do_poll, poll_config)
 
     def data_received(self, data: bytes) -> None:
-        log.debug('[%s] Got ISO-TP message from %x: %r',
-                  self.connector.get_name(), self.rx_id, data)
+        log.debug('[%s] Got ISO-TP message from %x: %s',
+                  self.connector.get_name(), self.rx_id, data.hex(' '))
         endpoints = list(self.case_tree.match(data))
         try:
             converted = self.uplink_converter.convert(endpoints, data)
