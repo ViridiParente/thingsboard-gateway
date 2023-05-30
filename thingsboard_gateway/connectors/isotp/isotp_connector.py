@@ -49,6 +49,8 @@ class IsotpConnector(Connector, Thread):
     loop: asyncio.AbstractEventLoop
     network: ISOTPNetwork
     __net_conf: dict[str, Any]
+    poll_lock: asyncio.Lock
+    poll_delay: Union[int, float]
 
     def __init__(self, gateway, config, connector_type):
         self.statistics = {'MessagesReceived': 0,
@@ -63,6 +65,7 @@ class IsotpConnector(Connector, Thread):
         self.loop = asyncio.new_event_loop()
         self.__devices = {}
         self.__rx_ids = {}
+        self.poll_lock = asyncio.Lock()
         self.__parse_config(config)
 
     def open(self):
@@ -101,6 +104,10 @@ class IsotpConnector(Connector, Thread):
             'channel': config.get('channel', 'vcan0'),
         }
         self.__net_conf.update(config.get('backend', {}))
+
+        poll_delay = config.get('pollDelay', 1)
+        assert isinstance(self,poll_delay, (int, float))
+        self.poll_delay = poll_delay
 
         for device_config in config.get('devices', []):
             name = device_config.get('name')
@@ -214,17 +221,31 @@ class Device(asyncio.Protocol):
         log.debug('[%s] Opened "connection" to %x (RX) / %x (TX)',
                   self.connector.get_name(), self.rx_id, self.tx_id)
 
+        def done_cb(task: asyncio.Task) -> None:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is None:
+                return
+            log.error('[%s] Poll task failed', self.connector.get_name(), exc_info=exc)
+
         for poll_config in self.polling:
-            self.do_poll(poll_config)
+            asyncio.create_task(self.bg_poll(poll_config)).add_done_callback(done_cb)
 
-    def do_poll(self, poll_config: PollConfig) -> None:
-        assert self.transport is not None
-        log.debug('[%s] Polling: %s', self.connector.get_name(), poll_config.data.hex(' '))
-        self.transport.write(poll_config.data)
+    async def bg_poll(self, poll_config: PollConfig) -> None:
+        while True:
+            assert self.transport is not None
+            log.debug('[%s] Polling: %s',
+                      self.connector.get_name(), poll_config.data.hex(' '))
 
-        if poll_config.period is not None:
-            self.connector.loop.call_later(poll_config.period,
-                                           self.do_poll, poll_config)
+            async with self.connector.poll_lock:
+                self.transport.write(poll_config.data)
+                await asyncio.sleep(self.connector.poll_delay)
+
+            if poll_config.period is None:
+                break
+            else:
+                await asyncio.sleep(poll_config.period)
 
     def data_received(self, data: bytes) -> None:
         log.debug('[%s] Got ISO-TP message from %x: %s',
