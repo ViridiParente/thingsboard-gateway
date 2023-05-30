@@ -229,7 +229,11 @@ class Device(asyncio.Protocol):
     def data_received(self, data: bytes) -> None:
         log.debug('[%s] Got ISO-TP message from %x: %s',
                   self.connector.get_name(), self.rx_id, data.hex(' '))
+
         endpoints = list(self.case_tree.match(data))
+        if not endpoints:
+            return
+
         try:
             converted = self.uplink_converter.convert(endpoints, data)
             if converted is None or not (converted.get('attributes') or
