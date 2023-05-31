@@ -106,7 +106,7 @@ class IsotpConnector(Connector, Thread):
         self.__net_conf.update(config.get('backend', {}))
 
         poll_delay = config.get('pollDelay', 1)
-        assert isinstance(self,poll_delay, (int, float))
+        assert isinstance(self.poll_delay, (int, float))
         self.poll_delay = poll_delay
 
         for device_config in config.get('devices', []):
