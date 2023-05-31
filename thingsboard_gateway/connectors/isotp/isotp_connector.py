@@ -65,7 +65,7 @@ class IsotpConnector(Connector, Thread):
         self.loop = asyncio.new_event_loop()
         self.__devices = {}
         self.__rx_ids = {}
-        self.poll_lock = asyncio.Lock()
+        self.poll_lock = asyncio.Lock(loop = self.loop)
         self.poll_delay = 1
         self.__parse_config(config)
 
