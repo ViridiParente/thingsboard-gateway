@@ -23,7 +23,7 @@ from copy import copy
 from random import choice
 from string import ascii_lowercase
 from threading import Thread
-from typing import Any, Optional, Literal
+from typing import Any, Optional, Literal, Union
 
 from thingsboard_gateway.tb_utility.tb_loader import TBModuleLoader
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
@@ -46,9 +46,11 @@ class IsotpConnector(Connector, Thread):
 
     __devices: dict[str, Device]
     __rx_ids: dict[int, Device]
-    __loop: asyncio.AbstractEventLoop
+    loop: asyncio.AbstractEventLoop
     network: ISOTPNetwork
     __net_conf: dict[str, Any]
+    poll_lock: asyncio.Lock
+    poll_delay: Union[int, float]
 
     def __init__(self, gateway, config, connector_type):
         self.statistics = {'MessagesReceived': 0,
@@ -60,9 +62,11 @@ class IsotpConnector(Connector, Thread):
         self.__config = config
         self.daemon = True
         self.__connected = False
-        self.__loop = asyncio.new_event_loop()
+        self.loop = asyncio.new_event_loop()
         self.__devices = {}
         self.__rx_ids = {}
+        self.poll_lock = asyncio.Lock(loop = self.loop)
+        self.poll_delay = 1
         self.__parse_config(config)
 
     def open(self):
@@ -70,7 +74,7 @@ class IsotpConnector(Connector, Thread):
         self.start()
 
     def close(self):
-        self.__loop.stop()
+        self.loop.stop()
         log.debug('[%s] Stopping', self.get_name())
 
     def get_name(self):
@@ -80,16 +84,16 @@ class IsotpConnector(Connector, Thread):
         return self.__connected
 
     def run(self):
-        asyncio.set_event_loop(self.__loop)
+        asyncio.set_event_loop(self.loop)
         self.network = ISOTPNetwork(**self.__net_conf)
         self.network.open()
-        self.__loop.run_until_complete(asyncio.gather(*(
+        self.loop.run_until_complete(asyncio.gather(*(
             device.open()
             for device in self.__devices.values()
         )))
         log.info('[%s] Connected', self.get_name())
         self.__connected = True
-        self.__loop.run_forever()
+        self.loop.run_forever()
         log.info('[%s] Stopped', self.get_name())
 
     def is_stopped(self):
@@ -101,6 +105,10 @@ class IsotpConnector(Connector, Thread):
             'channel': config.get('channel', 'vcan0'),
         }
         self.__net_conf.update(config.get('backend', {}))
+
+        poll_delay = config.get('pollDelay', self.poll_delay)
+        assert isinstance(self.poll_delay, (int, float))
+        self.poll_delay = poll_delay
 
         for device_config in config.get('devices', []):
             name = device_config.get('name')
@@ -127,6 +135,13 @@ class IsotpConnector(Connector, Thread):
 
                 case_tree = CaseTreeNode.parse(device_config.get('casetree'))
 
+                polls = device_config.get('polling')
+                if polls is not None:
+                    assert isinstance(polls, list), f'Invalid polling config: {polls!r}'
+                    polling = [PollConfig.parse(poll) for poll in polls]
+                else:
+                    polling = []
+
                 device = Device(
                     connector = self,
                     name = name,
@@ -135,6 +150,7 @@ class IsotpConnector(Connector, Thread):
                     rx_id = rx_id,
                     case_tree = case_tree,
                     send_on_change = send_on_change,
+                    polling = polling,
                     uplink_converter = self.__get_converter(config.get('converters'), True),
                 )
 
@@ -170,7 +186,7 @@ class IsotpConnector(Connector, Thread):
         pass # TODO
 
 
-class Device:
+class Device(asyncio.Protocol):
     connector: IsotpConnector
     name: str
     type: str
@@ -178,6 +194,7 @@ class Device:
     rx_id: int
     case_tree: CaseTreeNode
     send_on_change: bool
+    polling: list[PollConfig]
 
     uplink_converter: IsotpConverter
     transport: Optional[asyncio.Transport] = None
@@ -186,7 +203,7 @@ class Device:
 
     def __init__(self, *, connector: IsotpConnector, name: str, type: str, tx_id: int,
                  rx_id: int, case_tree: CaseTreeNode, send_on_change: bool,
-                 uplink_converter: IsotpConverter) -> None:
+                 polling: list[PollConfig], uplink_converter: IsotpConverter) -> None:
         self.connector = connector
         self.name = name
         self.type = type
@@ -194,24 +211,51 @@ class Device:
         self.rx_id = rx_id
         self.case_tree = case_tree
         self.send_on_change = send_on_change
+        self.polling = polling
         self.uplink_converter = uplink_converter
 
         self.old_data = {}
 
     async def open(self) -> None:
-        transport, protocol = await self.connector.network.create_connection(
+        self.transport, protocol = await self.connector.network.create_connection(
                 lambda: self, self.rx_id, self.tx_id)
         log.debug('[%s] Opened "connection" to %x (RX) / %x (TX)',
                   self.connector.get_name(), self.rx_id, self.tx_id)
 
-    def connection_made(self, transport: asyncio.Transport) -> None:
-        assert self.transport is None
-        self.transport = transport
+        def done_cb(task: asyncio.Task) -> None:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is None:
+                return
+            log.error('[%s] Poll task failed', self.connector.get_name(), exc_info=exc)
+
+        for poll_config in self.polling:
+            asyncio.create_task(self.bg_poll(poll_config)).add_done_callback(done_cb)
+
+    async def bg_poll(self, poll_config: PollConfig) -> None:
+        while True:
+            assert self.transport is not None
+            log.debug('[%s] Polling: %s',
+                      self.connector.get_name(), poll_config.data.hex(' '))
+
+            async with self.connector.poll_lock:
+                self.transport.write(poll_config.data)
+                await asyncio.sleep(self.connector.poll_delay)
+
+            if poll_config.period is None:
+                break
+            else:
+                await asyncio.sleep(poll_config.period)
 
     def data_received(self, data: bytes) -> None:
-        log.debug('[%s] Got ISO-TP message from %x: %r',
-                  self.connector.get_name(), self.rx_id, data)
+        log.debug('[%s] Got ISO-TP message from %x: %s',
+                  self.connector.get_name(), self.rx_id, data.hex(' '))
+
         endpoints = list(self.case_tree.match(data))
+        if not endpoints:
+            return
+
         try:
             converted = self.uplink_converter.convert(endpoints, data)
             if converted is None or not (converted.get('attributes') or
@@ -246,6 +290,24 @@ class Device:
             log.exception('[%s] \'%s\' parsing failed',
                           self.connector.get_name(), self.name)
 
+class PollConfig:
+    data: bytes
+    period: Union[None, int, float]
+
+    def __init__(self, *, data: bytes, period: Optional[float]) -> None:
+        self.data = data
+        self.period = period
+
+    @classmethod
+    def parse(cls, config: dict) -> PollConfig:
+        data_str = config.get('data')
+        assert isinstance(data_str, str), f'Invalid data: {data_str!r}'
+        data = bytes.fromhex(data_str)
+
+        period = config.get('period')
+        assert isinstance(period, (type(None), float, int))
+
+        return PollConfig(data = data, period = period)
 
 class CaseTreeSplit:
     start: int
