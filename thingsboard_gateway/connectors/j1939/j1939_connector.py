@@ -23,9 +23,11 @@ from threading import Thread, Event
 from thingsboard_gateway.tb_utility.tb_loader import TBModuleLoader
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 
-from thingsboard_gateway.connectors.can.bytes_can_downlink_converter import BytesCanDownlinkConverter
-from thingsboard_gateway.connectors.can.bytes_can_uplink_converter import BytesCanUplinkConverter
+from thingsboard_gateway.connectors.j1939.bytes_j1939_downlink_converter import BytesJ1939DownlinkConverter
+from thingsboard_gateway.connectors.j1939.bytes_j1939_uplink_converter import BytesJ1939UplinkConverter
 from thingsboard_gateway.connectors.connector import Connector, log
+
+import j1939
 
 
 class J1939Connector(Connector, Thread):
@@ -296,7 +298,7 @@ class J1939Connector(Connector, Thread):
                             "configs": [],
                         }
 
-                    self.__nodes[node_id]["configs"].append(msg_config)
+                    self.__nodes[pgn]["configs"].append(msg_config)
                     self.__devices[device_name][tb_item][tb_key] = None
 
                     if "polling" in msg_config:
