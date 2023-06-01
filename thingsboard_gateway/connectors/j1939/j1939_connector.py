@@ -380,3 +380,9 @@ class J1939Connector(Connector, Thread):
 
     def get_config(self):
         return self.__config
+
+    def on_attributes_update(self, content):
+        pass
+
+    def server_side_rpc_handler(self, content):
+        pass
