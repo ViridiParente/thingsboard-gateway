@@ -22,6 +22,7 @@ from threading import Thread, Event
 
 from thingsboard_gateway.tb_utility.tb_loader import TBModuleLoader
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
+from thingsboard_gateway.gateway.constants import *
 
 from thingsboard_gateway.connectors.j1939.bytes_j1939_downlink_converter import BytesJ1939DownlinkConverter
 from thingsboard_gateway.connectors.j1939.bytes_j1939_uplink_converter import BytesJ1939UplinkConverter
@@ -171,7 +172,7 @@ class J1939Connector(Connector, Thread):
                 self.close()
 
         if not ca_up or config["type"] == "always":
-            self.scheduler.enter(config["period"], 1, self.__poll, argument=(config,))
+            self.__scheduler.enter(config["period"], 1, self.__poll, argument=(config,))
 
     def __process_message(self, priority, pgn, sa, timestamp, data):
         if pgn not in self.__nodes:
@@ -207,14 +208,14 @@ class J1939Connector(Connector, Thread):
 
             log.debug("[%s] Pushing to TB server '%s' device data: %s", self.get_name(), conf["deviceName"], to_send)
 
-            to_send["telemetry"] = {
-                TELEMETRY_TIMESTAMP_PARAMETER: timestamp,
-                TELEMETRY_VALUES_PARAMETER: {
-                    key: val
-                    for ts_kv in to_send["telemetry"]
-                    for key, val in ts_kv.items()
+            to_send["telemetry"] = [
+                {
+                    TELEMETRY_TIMESTAMP_PARAMETER: timestamp * 1000,
+                    TELEMETRY_VALUES_PARAMETER: { key: val },
                 }
-            }
+                for ts_kv in to_send["telemetry"]
+                for key, val in ts_kv.items()
+            ]
 
             self.__gateway.send_to_storage(self.get_name(), to_send)
             self.statistics['MessagesSent'] += 1
