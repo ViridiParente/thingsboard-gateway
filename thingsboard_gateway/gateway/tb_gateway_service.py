@@ -78,6 +78,7 @@ DEFAULT_CONNECTORS = {
     "xmpp": "XMPPConnector",
     "ocpp": "OcppConnector",
     "isotp": "IsotpConnector",
+    "j1939": "J1939Connector",
 }
 
 DEFAULT_STATISTIC = {
