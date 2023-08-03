@@ -1,0 +1,4 @@
+from thingsboard_gateway.connectors.modbus.bytes_modbus_downlink_converter import BytesModbusDownlinkConverter
+
+class BytesModbusPulseableDownlinkConverter(BytesModbusDownlinkConverter):
+    pass
