@@ -150,8 +150,12 @@ class OpcUaConnector(Thread, Connector):
                 if not self.__connected and not self.__stopped:
                     self.__connect()
                 elif not self.__stopped:
+                    # log.info(f'scan time milli: {self.__server_conf.get("scanPeriodInMillis", 60000)}')
+                    # log.info(f'time.time() * 1000 - self.__previous_scan_time {time.time() * 1000 - self.__previous_scan_time}')
+                    # log.info(f'self.__server_conf.get("disableSubscriptions", False) {self.__server_conf.get("disableSubscriptions", False)}')
                     if self.__server_conf.get("disableSubscriptions", False) and time.time() * 1000 - self.__previous_scan_time > self.__server_conf.get(
                             "scanPeriodInMillis", 60000):
+                        log.info("SCANNING")
                         self.scan_nodes_from_config()
                         self.__previous_scan_time = time.time() * 1000
                     # giusguerrini, 2020-09-24: Fix: flush event set and send all data to platform,
@@ -159,6 +163,7 @@ class OpcUaConnector(Thread, Connector):
                     # per cycle, and platform doesn't lose events.
                     # NOTE: possible performance improvement: use a map to store only one event per
                     # variable to reduce frequency of messages to platform.
+                    # log.info(f"data to send: {self.data_to_send}")
                     while self.data_to_send:
                         self.__gateway.send_to_storage(self.get_name(), self.data_to_send.pop())
                 if self.__stopped:
@@ -235,10 +240,15 @@ class OpcUaConnector(Thread, Connector):
     @StatisticsService.CollectAllReceivedBytesStatistics(start_stat_type='allReceivedBytesFromTB')
     def on_attributes_update(self, content):
         log.debug(content)
+        log.info(f'self.__available_object_resources[content["device"]] {self.__available_object_resources[content["device"]]}')
+        log.info(f'content["device"] {content["device"]}')
+        log.info(f'self.__available_object_resources[content["device"]]["variables"]: { self.__available_object_resources[content["device"]]["variables"]}')
         try:
             for server_variables in self.__available_object_resources[content["device"]]['variables']:
+                log.info(f"server_variables: {server_variables}")
                 for attribute in content["data"]:
                     for variable in server_variables:
+                        log.info(f"VARIABLE: {variable}")
                         if attribute == variable:
                             try:
                                 if ( isinstance(content["data"][variable], int) ):
@@ -253,6 +263,7 @@ class OpcUaConnector(Thread, Connector):
 
     @StatisticsService.CollectAllReceivedBytesStatistics(start_stat_type='allReceivedBytesFromTB')
     def server_side_rpc_handler(self, content):
+        log.info(f"CONTENT: {content}")
         try:
             rpc_method = content["data"].get("method")
 
@@ -264,7 +275,7 @@ class OpcUaConnector(Thread, Connector):
                     args_list = content['data']['params'].split(';')
 
                     if 'ns' in content['data']['params']:
-                        full_path = ';'.join([item for item in (args_list[0:-1] if rpc_method == 'set' else args_list)])
+                        full_path = "=".join(content['data']['params'].split("=",3)[:3])
                     else:
                         full_path = args_list[0].split('=')[-1]
                 except IndexError:
@@ -292,8 +303,10 @@ class OpcUaConnector(Thread, Connector):
                                                    'code': 200})
                 else:
                     try:
-                        value = args_list[2].split('=')[-1]
-                        node.set_value(value)
+                        log.info(f"node: {node}")
+                        log.info(f"node_value: {node.get_value()}")
+                        value = content['data']['params'].split('=')[-1]
+                        node.set_value(float(value), ua.VariantType.Float)
                         self.__gateway.send_rpc_reply(content['device'],
                                                       content['data']['id'],
                                                       {'success': 'true', 'code': 200})
@@ -302,8 +315,9 @@ class OpcUaConnector(Thread, Connector):
                         self.__gateway.send_rpc_reply(content['device'],
                                                       content['data']['id'],
                                                       {'error': 'Method SET take three arguments!', 'code': 400})
-                    except ua.UaStatusCodeError:
+                    except ua.UaStatusCodeError as e:
                         log.error('Write method doesn\'t allow!')
+                        log.error(f'error: {e}')
                         self.__gateway.send_rpc_reply(content['device'],
                                                       content['data']['id'],
                                                       {'error': 'Write method doesn\'t allow!', 'code': 400})
@@ -349,14 +363,20 @@ class OpcUaConnector(Thread, Connector):
 
     def scan_nodes_from_config(self):
         try:
+            log.info(f"self.interest_nodes: {self.__interest_nodes}")
             if self.__interest_nodes:
                 for device_object in self.__interest_nodes:
+                    log.info(f"device_object: {device_object}")
                     for current_device in device_object:
+                        log.info(f"current_device: {current_device}")
                         try:
                             device_configuration = device_object[current_device]
+                            log.info(f"device_configuration: {device_configuration}")
                             devices_info_array = self.__search_general_info(device_configuration)
+                            log.info(f"devices_info_array: {devices_info_array}")
                             for device_info in devices_info_array:
                                 if device_info is not None and device_info.get("deviceNode") is not None:
+                                    log.info("Scanning nodes and subscribe")
                                     self.__search_nodes_and_subscribe(device_info)
                                     self.__save_methods(device_info)
                                     self.__search_attribute_update_variables(device_info)
@@ -379,7 +399,9 @@ class OpcUaConnector(Thread, Connector):
     def __search_nodes_and_subscribe(self, device_info):
         sub_nodes = []
         information_types = {"attributes": "attributes", "timeseries": "telemetry"}
+        log.info(f'device_info[configuration]: {device_info["configuration"]}')
         for information_type in information_types:
+            log.info(f"information type: {information_type}")
             for information in device_info["configuration"][information_type]:
                 config_path = TBUtility.get_value(information["path"], get_tag=True)
                 information_path = self._check_path(config_path, device_info["deviceNode"])
@@ -453,6 +475,7 @@ class OpcUaConnector(Thread, Connector):
                 log.debug("Added subscription to nodes: %s", str(sub_nodes))
 
     def __save_methods(self, device_info):
+        log.info(f"SAVE METHODES: {device_info}")
         try:
             if self.__available_object_resources.get(device_info["deviceName"]) is None:
                 self.__available_object_resources[device_info["deviceName"]] = {}
@@ -485,8 +508,10 @@ class OpcUaConnector(Thread, Connector):
                     self.__available_object_resources[device_name]["variables"] = []
                 for attribute_update in device_info["configuration"]["attributes_updates"]:
                     attribute_path = self._check_path(attribute_update["attributeOnDevice"], node)
+                    log.info(f"ATTRIBUTE_PATH: {attribute_path}")
                     attribute_nodes = []
                     self.__search_node(node, attribute_path, result=attribute_nodes)
+                    log.info(f"ATTRIBUTE_NODES: {attribute_nodes}")
                     for attribute_node in attribute_nodes:
                         if attribute_node is not None:
                             if self.get_node_path(attribute_node) ==  attribute_path:
@@ -500,6 +525,7 @@ class OpcUaConnector(Thread, Connector):
         result = []
         match_devices = []
         self.__search_node(self.__opcua_nodes["root"], TBUtility.get_value(device["deviceNodePattern"], get_tag=True), result=match_devices)
+        log.info(f"match_devices: {match_devices}")
         for device_node in match_devices:
             if device_node is not None:
                 result_device_dict = {"deviceName": None, "deviceType": None, "deviceNode": device_node, "configuration": deepcopy(device)}
@@ -565,19 +591,26 @@ class OpcUaConnector(Thread, Connector):
         return '\\.'.join(node.get_browse_name().Name for node in node.get_path(200000))
 
     def __search_node(self, current_node, fullpath, search_method=False, result=None):
+        log.info(f"current_node: {current_node}")
+        log.info(f"fullpath: {fullpath}")
         if result is None:
             result = []
         try:
             if regex.match(r"ns=\d*;[isgb]=.*", fullpath, regex.IGNORECASE):
+                log.info("REGEX MATCH")
                 if self.__show_map:
                     log.debug("Looking for node with config")
                 node = self.client.get_node(fullpath)
+                log.info("here in search")
+                # log.info(f"node: {node}")
+                # log.info(f"node: {node.get_value()}")
                 if node is None:
                     log.warning("NODE NOT FOUND - using configuration %s", fullpath)
                 else:
                     log.debug("Found in %s", node)
                     result.append(node)
             else:
+                log.info("NOT REGEX")
                 fullpath_pattern = regex.compile(fullpath)
                 full1 = fullpath.replace('\\\\.', '.')
                 # current_node_path = '\\.'.join(char.split(":")[1] for char in current_node.get_path(200000, True))
