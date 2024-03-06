@@ -81,7 +81,7 @@ class Slave(Thread):
             before = time()
             self.callback(self)
             duration = time() - before
-            sleep(self.poll_period - duration)
+            sleep(max(0.001, self.poll_period - duration))
 
     def run(self):
         self.timer()
