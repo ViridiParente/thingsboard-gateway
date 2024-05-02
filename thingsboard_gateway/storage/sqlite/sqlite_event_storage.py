@@ -56,7 +56,7 @@ class SQLiteEventStorage(EventStorage):
 
     def event_pack_processing_done(self):
         if not self.stopped:
-            self.delete_data(self.delete_time_point)
+            self.delete_data(self.delete_time_point, self.last_read)
 
     def read_data(self, ts):
         self.db.__stopped = True
@@ -64,8 +64,8 @@ class SQLiteEventStorage(EventStorage):
         self.db.__stopped = False
         return data
 
-    def delete_data(self, ts):
-        return self.db.delete_data(ts)
+    def delete_data(self, ts_low, ts_high):
+        return self.db.delete_data(ts_low, ts_high)
 
     def put(self, message):
         try:
