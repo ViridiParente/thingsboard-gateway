@@ -51,7 +51,11 @@ class BytesModbusDownlinkConverter(ModbusConverter):
             value = data["data"]["params"]
         else:
             value = config.get("value", 0)
-
+        if config.get("dividier"):  #Corresponding attribute would use 'multiplier', or use 'divider' still with value of 1/config["dividier"]
+            value = float(value) / float(config["divider"])
+        if config.get("multiplier"): #Corresponding attribute would use 'divider', or use 'multiplier' still with value of 1/config["multiplier"]
+            value = float(value) * float(config["multiplier"])
+        
         lower_type = config.get("type", config.get("tag", "error")).lower()
 
         if lower_type == "error":
@@ -61,11 +65,11 @@ class BytesModbusDownlinkConverter(ModbusConverter):
         if lower_type in ["integer", "dword", "dword/integer", "word", "int"]:
             lower_type = str(variable_size) + "int"
             assert builder_functions.get(lower_type) is not None
-            builder_functions[lower_type](int(value))
+            builder_functions[lower_type](round(value))
         elif lower_type in ["uint", "unsigned", "unsigned integer", "unsigned int"]:
             lower_type = str(variable_size) + "uint"
             assert builder_functions.get(lower_type) is not None
-            builder_functions[lower_type](int(value))
+            builder_functions[lower_type](round(value))
         elif lower_type in ["float", "double"]:
             lower_type = str(variable_size) + "float"
             assert builder_functions.get(lower_type) is not None
@@ -81,7 +85,7 @@ class BytesModbusDownlinkConverter(ModbusConverter):
             assert builder_functions.get("string") is not None
             builder_functions[lower_type](value)
         elif lower_type in builder_functions and 'int' in lower_type:
-            builder_functions[lower_type](int(value))
+            builder_functions[lower_type](round(value))
         elif lower_type in builder_functions and 'float' in lower_type:
             builder_functions[lower_type](float(value))
         elif lower_type in builder_functions:
