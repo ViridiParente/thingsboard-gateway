@@ -2,6 +2,7 @@ import datetime
 import subprocess
 from threading import Thread
 from time import time, sleep
+from platform import system as platform_system
 
 import simplejson
 
@@ -22,7 +23,7 @@ class StatisticsService(Thread):
         self._stopped = False
 
         self._config_path = config_path
-        self._stats_send_period_in_seconds = stats_send_period_in_seconds / 1000
+        self._stats_send_period_in_seconds = stats_send_period_in_seconds
         self._gateway = gateway
         self._log = log
         self._config = self._load_config()
@@ -61,8 +62,14 @@ class StatisticsService(Thread):
                 data_to_send = {}
                 for attribute in self._config:
                     try:
-                        process = subprocess.run(attribute['command'], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                                 encoding='utf-8', timeout=attribute['timeout'])
+                        if platform_system() == 'Windows':
+                            process = subprocess.run(attribute['command'], stdout=subprocess.PIPE,
+                                                     stderr=subprocess.PIPE,
+                                                     encoding='utf-8', timeout=attribute['timeout'])
+                        else:
+                            process = subprocess.run(['/bin/sh', '-c', attribute['command']], stdout=subprocess.PIPE,
+                                                     stderr=subprocess.PIPE,
+                                                     encoding='utf-8', timeout=attribute['timeout'])
                     except Exception as e:
                         self._log.warning("Statistic parameter %s raise the exception: %s",
                                           attribute['attributeOnGateway'], e)
@@ -72,12 +79,12 @@ class StatisticsService(Thread):
 
                     data_to_send[attribute['attributeOnGateway']] = value
 
-                self._gateway.tb_client.client.send_attributes(data_to_send)
+                self._gateway.tb_client.client.send_telemetry(data_to_send)
 
                 if datetime.datetime.now() - self._last_streams_statistics_clear_time >= datetime.timedelta(days=1):
                     self.clear_streams_statistics()
 
-                self._gateway.tb_client.client.send_attributes(StatisticsService.DATA_STREAMS_STATISTICS)
+                self._gateway.tb_client.client.send_telemetry(StatisticsService.DATA_STREAMS_STATISTICS)
 
                 self._last_poll = time()
 
@@ -118,7 +125,8 @@ class StatisticsService(Thread):
                 except ValueError:
                     pass
 
-                func(*args, **kwargs)
+                result = func(*args, **kwargs)
+                return result
 
             return inner
 

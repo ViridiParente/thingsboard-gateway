@@ -1,4 +1,4 @@
-#     Copyright 2020. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -12,20 +12,21 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
-CURRENT_VERSION=$( grep -Po 'VERSION[ ,]=[ ,]\"\K(([0-9])+(\.){0,1})+' setup.py )
+CURRENT_VERSION=$( grep -Po 'VERSION[ ,]=[ ,]\"\K(([0-9])+(\.){0,1})+' thingsboard_gateway/version.py )
 if [ "$1" = "clean" ] || [ "$1" = "only_clean" ] ; then
   sudo rm -rf /var/log/thingsboard-gateway/
   sudo rm -rf deb_dist/
   sudo rm -rf dist/
   sudo rm -rf thingsboard-gateway.egg-info/
   sudo rm -rf /etc/thingsboard-gateway/
-  sudo rm -rf thingsboard-gateway-$CURRENT_VERSION.tar.gz
-  sudo rm -rf thingsboard-gateway-$CURRENT_VERSION.deb
+  sudo rm -rf thingsboard-gateway-*.tar.gz
+  sudo rm -rf configs.tar.gz
+  sudo rm -rf thingsboard-gateway-*.deb
   sudo rm -rf python3-thingsboard-gateway.deb
   sudo rm -rf python3-thingsboard-gateway.rpm
-  sudo rm -rf thingsboard-gateway-$CURRENT_VERSION.noarch.rpm
+  sudo rm -rf thingsboard-gateway-*.noarch.rpm
   sudo rm -rf thingsboard_gateway.egg-info
-  sudo rm -rf /home/zenx/rpmbuild/BUILDROOT/*
+  sudo rm -rf thingsboard_gateway/config/backup
   sudo rm -rf build/
   sudo rm -rf docker/config || echo ''
   sudo rm -rf docker/extensions || echo ''
@@ -47,11 +48,11 @@ if [ "$1" != "only_clean" ] ; then
   cp -r for_build/etc deb_dist/thingsboard-gateway-$CURRENT_VERSION/debian/python3-thingsboard-gateway
   cp -r for_build/var deb_dist/thingsboard-gateway-$CURRENT_VERSION/debian/python3-thingsboard-gateway
   cp -r -a for_build/DEBIAN deb_dist/thingsboard-gateway-$CURRENT_VERSION/debian/python3-thingsboard-gateway
-  chown root:root deb_dist/thingsboard-gateway-$CURRENT_VERSION/debian/python3-thingsboard-gateway/ -R
-  chown root:root deb_dist/thingsboard-gateway-$CURRENT_VERSION/debian/python3-thingsboard-gateway/var/ -R
-  chmod 775 deb_dist/thingsboard-gateway-$CURRENT_VERSION/debian/python3-thingsboard-gateway/DEBIAN/preinst
-  chmod +x deb_dist/thingsboard-gateway-$CURRENT_VERSION/debian/python3-thingsboard-gateway/DEBIAN/postinst
-  chown root:root deb_dist/thingsboard-gateway-$CURRENT_VERSION/debian/python3-thingsboard-gateway/DEBIAN/preinst
+  sudo chown root:root deb_dist/thingsboard-gateway-$CURRENT_VERSION/debian/python3-thingsboard-gateway/ -R
+  sudo chown root:root deb_dist/thingsboard-gateway-$CURRENT_VERSION/debian/python3-thingsboard-gateway/var/ -R
+  sudo chmod 775 deb_dist/thingsboard-gateway-$CURRENT_VERSION/debian/python3-thingsboard-gateway/DEBIAN/preinst
+  sudo chmod +x deb_dist/thingsboard-gateway-$CURRENT_VERSION/debian/python3-thingsboard-gateway/DEBIAN/postinst
+  sudo chown root:root deb_dist/thingsboard-gateway-$CURRENT_VERSION/debian/python3-thingsboard-gateway/DEBIAN/preinst
 # Bulding Deb package
   dpkg-deb -b deb_dist/thingsboard-gateway-$CURRENT_VERSION/debian/python3-thingsboard-gateway/
   mkdir deb-temp

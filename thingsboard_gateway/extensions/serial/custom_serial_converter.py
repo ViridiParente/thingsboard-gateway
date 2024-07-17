@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -12,23 +12,24 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
-from thingsboard_gateway.connectors.converter import Converter, log
+from thingsboard_gateway.connectors.converter import Converter
 
 
 class CustomSerialUplinkConverter(Converter):
-    def __init__(self, config):
+    def __init__(self, config, logger):
+        self._log = logger
         self.__config = config
-        self.result_dict = {
-            'deviceName': config.get('name', 'CustomSerialDevice'),
-            'deviceType': config.get('deviceType', 'default'),
-            'attributes': [],
-            'telemetry': []
-            }
 
     def convert(self, config, data: bytes):
+        dict_result = {
+            'deviceName': self.__config.get('name', 'CustomSerialDevice'),
+            'deviceType': self.__config.get('deviceType', 'default'),
+            'attributes': [],
+            'telemetry': []
+        }
         keys = ['attributes', 'telemetry']
         for key in keys:
-            self.result_dict[key] = []
+            dict_result[key] = []
             if self.__config.get(key) is not None:
                 for config_object in self.__config.get(key):
                     data_to_convert = data
@@ -45,6 +46,6 @@ class CustomSerialUplinkConverter(Converter):
                         from_byte = config_object.get('fromByte')
                         data_to_convert = data_to_convert[from_byte:]
                     converted_data = {config_object['key']: data_to_convert.decode('UTF-8')}
-                    self.result_dict[key].append(converted_data)
-        log.debug("Converted data: %s", self.result_dict)
-        return self.result_dict
+                    dict_result[key].append(converted_data)
+        self._log.debug("Converted data: %s", dict_result)
+        return dict_result

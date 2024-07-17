@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -14,13 +14,14 @@
 
 from urllib.parse import quote
 
-from thingsboard_gateway.connectors.request.request_converter import RequestConverter, log
+from thingsboard_gateway.connectors.request.request_converter import RequestConverter
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 from thingsboard_gateway.gateway.statistics_service import StatisticsService
 
 
 class JsonRequestDownlinkConverter(RequestConverter):
-    def __init__(self, config):
+    def __init__(self, config, logger):
+        self.__log = logger
         self.__config = config
 
     @StatisticsService.CollectStatistics(start_stat_type='allReceivedBytesFromTB',
@@ -33,10 +34,10 @@ class JsonRequestDownlinkConverter(RequestConverter):
 
                 result = {
                     "url": self.__config["requestUrlExpression"].replace("${attributeKey}", quote(attribute_key))
-                                                                .replace("${attributeValue}", quote(attribute_value))
+                                                                .replace("${attributeValue}", quote(str(attribute_value)))
                                                                 .replace("${deviceName}", quote(data["device"])),
                     "data": self.__config["requestValueExpression"].replace("${attributeKey}", quote(attribute_key))
-                                                                   .replace("${attributeValue}", quote(attribute_value))
+                                                                   .replace("${attributeValue}", quote(str(attribute_value)))
                                                                    .replace("${deviceName}", quote(data["device"]))
                 }
             else:
@@ -64,4 +65,4 @@ class JsonRequestDownlinkConverter(RequestConverter):
 
             return result
         except Exception as e:
-            log.exception(e)
+            self.__log.exception(e)

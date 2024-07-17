@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -20,9 +20,10 @@ from typing import Union
 
 import simplejson
 from simplejson import dumps
+
+from thingsboard_gateway.gateway.proto.messages_pb2 import *
 from thingsboard_gateway.grpc_connectors.gw_grpc_client import GrpcClient
 from thingsboard_gateway.grpc_connectors.gw_grpc_msg_creator import GrpcMsgCreator, Status
-from thingsboard_gateway.gateway.proto.messages_pb2 import *
 
 log = getLogger('connector')
 
@@ -30,13 +31,14 @@ log = getLogger('connector')
 class GwGrpcConnector(Thread):
     def __init__(self, connector_config: str, config_dir_path: str):
         super().__init__()
-        fileConfig(config_dir_path + 'logs.conf')
+        fileConfig(config_dir_path + 'logs.json')
         global log
         log = getLogger('connector')
         self.stopped = False
         self.__started = False
         self.registered = False
         self.connection_config = simplejson.loads(connector_config)
+        self.__connector_id = None
         self.__connector_name = None
         self.__received_configuration = None
         self.__registration_request_sent = False
@@ -129,8 +131,9 @@ class GwGrpcConnector(Thread):
             self.registered = True
             self.__registration_request_sent = False
             self.__received_configuration = data.connectorConfigurationMsg.configuration
+            self.__connector_id = data.connectorConfigurationMsg.connectorId
             self.__connector_name = data.connectorConfigurationMsg.connectorName
-            log.info("Connector %s connected to ThingsBoard IoT gateway", self.__connector_name)
+            log.info("[%r] Connector %s connected to ThingsBoard IoT gateway", self.__connector_id, self.__connector_name)
             log.debug("Configuration - received.")
             log.debug(self.__received_configuration)
             if data.HasField('connectorGetConnectedDevicesResponseMsg'):

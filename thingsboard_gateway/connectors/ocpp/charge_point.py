@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -23,11 +23,12 @@ from thingsboard_gateway.tb_utility.tb_loader import TBModuleLoader
 
 
 class ChargePoint(CP):
-    def __init__(self, charge_point_id, websocket, config, callback):
+    def __init__(self, charge_point_id, websocket, config, callback, logger):
         super(ChargePoint, self).__init__(charge_point_id, websocket)
+        self._log = logger
         self._config = config
         self._callback = callback
-        self._uplink_converter = self._load_converter(config['uplink_converter_name'])(self._config)
+        self._uplink_converter = self._load_converter(config['uplink_converter_name'])(self._config, self._log)
         self._profile = {}
         self.name = None
         self.type = None

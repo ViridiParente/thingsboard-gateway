@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ from time import time, sleep
 from pymodbus.constants import Defaults
 
 from thingsboard_gateway.connectors.modbus.constants import *
-from thingsboard_gateway.connectors.connector import log
 from thingsboard_gateway.connectors.modbus.bytes_modbus_uplink_converter import BytesModbusUplinkConverter
 from thingsboard_gateway.connectors.modbus.bytes_modbus_downlink_converter import BytesModbusDownlinkConverter
 from thingsboard_gateway.tb_utility.tb_loader import TBModuleLoader
@@ -28,19 +27,21 @@ class Slave(Thread):
     def __init__(self, **kwargs):
         super().__init__()
         self.timeout = kwargs.get('timeout')
-        self.name = kwargs['deviceName']
+        self.device_name = kwargs['deviceName']
+        self._log = kwargs['logger']
         self.poll_period = kwargs['pollPeriod'] / 1000
 
-        self.byte_order = kwargs['byteOrder']
-        self.word_order = kwargs.get('wordOrder')
+        self.byte_order = kwargs.get('byteOrder', 'LITTLE')
+        self.word_order = kwargs.get('wordOrder', 'LITTLE')
         self.config = {
             'unitId': kwargs['unitId'],
             'deviceType': kwargs.get('deviceType', 'default'),
             'type': kwargs['type'],
             'host': kwargs.get('host'),
             'port': kwargs['port'],
-            'byteOrder': kwargs['byteOrder'],
-            'wordOrder': kwargs['wordOrder'],
+            'byteOrder': kwargs.get('byteOrder', 'LITTLE'),
+            'wordOrder': kwargs.get('wordOrder', 'LITTLE'),
+            'tls': kwargs.get('tls'),
             'timeout': kwargs.get('timeout', 35),
             'stopbits': kwargs.get('stopbits', Defaults.Stopbits),
             'bytesize': kwargs.get('bytesize', Defaults.Bytesize),
@@ -73,11 +74,15 @@ class Slave(Thread):
         self.callback = kwargs['callback']
 
         self.daemon = True
+        self.stop = False
+
+        self.name = "Modbus slave processor for unit " + str(self.config['unitId']) + " on host " + str(
+            self.config['host']) + ":" + str(self.config['port'])
 
         self.start()
 
     def timer(self):
-        while True:
+        while not self.stop:
             before = time()
             self.callback(self)
             duration = time() - before
@@ -86,31 +91,34 @@ class Slave(Thread):
     def run(self):
         self.timer()
 
+    def close(self):
+        self.stop = True
+
     def get_name(self):
-        return self.name
+        return self.device_name
 
     def __load_converters(self, connector, gateway):
         try:
             if self.config.get(UPLINK_PREFIX + CONVERTER_PARAMETER) is not None:
                 converter = TBModuleLoader.import_module(connector.connector_type,
-                                                         self.config[UPLINK_PREFIX + CONVERTER_PARAMETER])(self)
+                                                         self.config[UPLINK_PREFIX + CONVERTER_PARAMETER])(self, self._log)
             else:
-                converter = BytesModbusUplinkConverter({**self.config, 'deviceName': self.name})
+                converter = BytesModbusUplinkConverter({**self.config, 'deviceName': self.device_name}, self._log)
 
             if self.config.get(DOWNLINK_PREFIX + CONVERTER_PARAMETER) is not None:
                 downlink_converter = TBModuleLoader.import_module(connector.connector_type, self.config[
-                    DOWNLINK_PREFIX + CONVERTER_PARAMETER])(self)
+                    DOWNLINK_PREFIX + CONVERTER_PARAMETER])(self, self._log)
             else:
-                downlink_converter = BytesModbusDownlinkConverter(self.config)
-
-            if self.name not in gateway.get_devices():
-                gateway.add_device(self.name, {CONNECTOR_PARAMETER: connector},
-                                   device_type=self.config.get(DEVICE_TYPE_PARAMETER))
+                downlink_converter = BytesModbusDownlinkConverter(self.config, self._log)
 
             self.config[UPLINK_PREFIX + CONVERTER_PARAMETER] = converter
             self.config[DOWNLINK_PREFIX + CONVERTER_PARAMETER] = downlink_converter
+
+            if self.device_name not in gateway.get_devices():
+                gateway.add_device(self.device_name, {CONNECTOR_PARAMETER: connector},
+                                   device_type=self.config.get(DEVICE_TYPE_PARAMETER))
         except Exception as e:
-            log.exception(e)
+            self._log.exception(e)
 
     def __str__(self):
-        return f'{self.name}'
+        return f'{self.device_name}'

@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ from time import sleep, time
 from thingsboard_gateway.gateway.statistics_service import StatisticsService
 from thingsboard_gateway.tb_utility.tb_loader import TBModuleLoader
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
+from thingsboard_gateway.tb_utility.tb_logger import init_logger
 
 try:
     from bacpypes.core import run, stop
@@ -31,7 +32,7 @@ except ImportError:
 
 from bacpypes.pdu import Address, GlobalBroadcast, LocalBroadcast, LocalStation, RemoteStation
 
-from thingsboard_gateway.connectors.connector import Connector, log
+from thingsboard_gateway.connectors.connector import Connector
 from thingsboard_gateway.connectors.bacnet.bacnet_utilities.tb_gateway_bacnet_application import TBBACnetApplication
 
 
@@ -42,12 +43,15 @@ class BACnetConnector(Thread, Connector):
                            'MessagesSent': 0}
         super().__init__()
         self.__config = config
-        self.setName(config.get('name', 'BACnet ' + ''.join(choice(ascii_lowercase) for _ in range(5))))
+        self.__id = self.__config.get('id')
+        self.name = config.get('name', 'BACnet ' + ''.join(choice(ascii_lowercase) for _ in range(5)))
         self.__devices = []
         self.__device_indexes = {}
         self.__devices_address_name = {}
         self.__gateway = gateway
-        self._application = TBBACnetApplication(self, self.__config)
+        self._log = init_logger(self.__gateway, self.name, self.__config.get('logLevel', 'INFO'),
+                                enable_remote_logging=self.__config.get('enableRemoteLogging', False))
+        self._application = TBBACnetApplication(self, self.__config, self._log)
         self.__bacnet_core_thread = Thread(target=run, name="BACnet core thread", daemon=True,
                                            kwargs={"sigterm": None, "sigusr1": None})
         self.__bacnet_core_thread.start()
@@ -73,7 +77,7 @@ class BACnetConnector(Thread, Connector):
         self.__connected = True
         self.scan_network()
         self._application.do_whois()
-        log.debug("WhoIsRequest has been sent.")
+        self._log.debug("WhoIsRequest has been sent.")
         self.scan_network()
         while not self.__stopped:
             sleep(.2)
@@ -96,7 +100,7 @@ class BACnetConnector(Thread, Connector):
                     else:
                         sleep(.2)
                 except Exception as e:
-                    log.exception(e)
+                    self._log.exception(e)
 
             if not self.__convert_and_save_data_queue.empty():
                 for _ in range(self.__convert_and_save_data_queue.qsize()):
@@ -107,18 +111,41 @@ class BACnetConnector(Thread, Connector):
     def close(self):
         self.__stopped = True
         self.__connected = False
+        self._log.stop()
+
+        self._application.mux.directPort.connected = False
+        self._application.mux.directPort.accepting = False
+        self._application.mux.directPort.connecting = False
+        self._application.mux.directPort.del_channel()
+        if self._application.mux.directPort.socket is not None:
+            try:
+                sleep(1)
+                self._application.mux.directPort.socket.close()
+            except OSError:
+                pass
+
         stop()
+        self._log.info('BACnet connector has been stopped.')
 
     def get_name(self):
         return self.name
 
+    def get_id(self):
+        return self.__id
+
+    def get_type(self):
+        return self._connector_type
+
     def is_connected(self):
         return self.__connected
+
+    def is_stopped(self):
+        return self.__stopped
 
     @StatisticsService.CollectAllReceivedBytesStatistics(start_stat_type='allReceivedBytesFromTB')
     def on_attributes_update(self, content):
         try:
-            log.debug('Recieved Attribute Update Request: %r', str(content))
+            self._log.debug('Recieved Attribute Update Request: %r', str(content))
             for device in self.__devices:
                 if device["deviceName"] == content["device"]:
                     for request in device["attribute_updates"]:
@@ -131,16 +158,16 @@ class BACnetConnector(Thread, Connector):
                                     self.__request_functions[request["config"]["requestType"]](iocb)
                                     return
                         else:
-                            log.error("\"requestType\" not found in request configuration for key %s device: %s",
+                            self._log.error("\"requestType\" not found in request configuration for key %s device: %s",
                                       request.get("key", "[KEY IS EMPTY]"),
                                       device["deviceName"])
         except Exception as e:
-            log.exception(e)
+            self._log.exception(e)
 
     @StatisticsService.CollectAllReceivedBytesStatistics(start_stat_type='allReceivedBytesFromTB')
     def server_side_rpc_handler(self, content):
         try:
-            log.debug('Recieved RPC Request: %r', str(content))
+            self._log.debug('Recieved RPC Request: %r', str(content))
             for device in self.__devices:
                 if device["deviceName"] == content["device"]:
                     method_found = False
@@ -162,14 +189,14 @@ class BACnetConnector(Thread, Connector):
                                 #                                             iocb,
                                 #                                             self.__rpc_cancel_processing)
                         else:
-                            log.error("\"requestType\" not found in request configuration for key %s device: %s",
+                            self._log.error("\"requestType\" not found in request configuration for key %s device: %s",
                                       request.get("key", "[KEY IS EMPTY]"),
                                       device["deviceName"])
                     if not method_found:
-                        log.error("RPC method %s not found in configuration", content["data"]["method"])
+                        self._log.error("RPC method %s not found in configuration", content["data"]["method"])
                         self.__gateway.send_rpc_reply(content["device"], content["data"]["id"], success_sent=False)
         except Exception as e:
-            log.exception(e)
+            self._log.exception(e)
 
     def __rpc_response_cb(self, iocb, callback_params=None):
         device = self.rpc_requests_in_progress[iocb]
@@ -177,26 +204,26 @@ class BACnetConnector(Thread, Connector):
         content = device["content"]
         if iocb.ioResponse:
             apdu = iocb.ioResponse
-            log.debug("Received callback with Response: %r", apdu)
+            self._log.debug("Received callback with Response: %r", apdu)
             converted_data = converter.convert(None, apdu)
             if converted_data is None:
                 converted_data = {"success": True}
             self.__gateway.send_rpc_reply(content["device"], content["data"]["id"], converted_data)
             # self.__gateway.rpc_with_reply_processing(iocb, converted_data or {"success": True})
         elif iocb.ioError:
-            log.exception("Received callback with Error: %r", iocb.ioError)
+            self._log.exception("Received callback with Error: %r", iocb.ioError)
             data = {"error": str(iocb.ioError)}
             self.__gateway.send_rpc_reply(content["device"], content["data"]["id"], data)
-            log.debug(iocb.ioError)
+            self._log.debug(iocb.ioError)
         else:
-            log.error("Received unknown RPC response callback from device: %r", iocb)
+            self._log.error("Received unknown RPC response callback from device: %r", iocb)
 
     def __rpc_cancel_processing(self, iocb):
-        log.info("RPC with iocb %r - cancelled.", iocb)
+        self._log.info("RPC with iocb %r - cancelled.", iocb)
 
     def scan_network(self):
         self._application.do_whois()
-        log.debug("WhoIsRequest has been sent.")
+        self._log.debug("WhoIsRequest has been sent.")
         for device in self.__config_devices:
             try:
                 if self._application.check_or_add(device):
@@ -212,7 +239,7 @@ class BACnetConnector(Thread, Connector):
                             }
                             self._application.do_read_property(**data_to_application)
             except Exception as e:
-                log.exception(e)
+                self._log.exception(e)
 
     def __convert_and_save_data(self, queue):
         converter, mapping_type, config, iocb = queue.get()
@@ -221,8 +248,8 @@ class BACnetConnector(Thread, Connector):
             converted_data = converter.convert((mapping_type, config),
                                                iocb.ioResponse if iocb.ioResponse else iocb.ioError)
         except Exception as e:
-            log.exception(e)
-        self.__gateway.send_to_storage(self.name, converted_data)
+            self._log.exception(e)
+        self.__gateway.send_to_storage(self.get_name(), self.__id, converted_data)
 
     def __bacnet_device_mapping_response_cb(self, iocb, callback_params):
         mapping_type = callback_params["mapping_type"]
@@ -238,8 +265,8 @@ class BACnetConnector(Thread, Connector):
             converted_data = converter.convert((mapping_type, config),
                                                iocb.ioResponse if iocb.ioResponse else iocb.ioError)
         except Exception as e:
-            log.exception(e)
-        self.__gateway.send_to_storage(self.name, converted_data)
+            self._log.exception(e)
+        self.__gateway.send_to_storage(self.get_name(), self.get_id(), converted_data)
 
     def __load_converters(self, device):
         datatypes = ["attributes", "telemetry", "attribute_updates", "server_side_rpc"]
@@ -250,9 +277,9 @@ class BACnetConnector(Thread, Connector):
                         converter_object = self.default_converters[converter_type] if datatype_config.get(
                             "class") is None else TBModuleLoader.import_module(self._connector_type,
                                                                                device.get("class"))
-                        datatype_config[converter_type] = converter_object(device)
+                        datatype_config[converter_type] = converter_object(device, self._log)
                 except Exception as e:
-                    log.exception(e)
+                    self._log.exception(e)
 
     def add_device(self, data):
         if self.__devices_address_name.get(data["address"]) is None:
@@ -261,7 +288,7 @@ class BACnetConnector(Thread, Connector):
                     try:
                         config_address = Address(device["address"])
                         device_name_tag = TBUtility.get_value(device["deviceName"], get_tag=True)
-                        device_name = device["deviceName"].replace("${" + device_name_tag + "}", data.pop("name"))
+                        device_name = device["deviceName"].replace("${" + device_name_tag + "}", data["name"])
                         device_information = {
                             **data,
                             **self.__get_requests_configs(device),
@@ -282,9 +309,9 @@ class BACnetConnector(Thread, Connector):
                             self.__devices_address_name[data["address"]] = device_information["deviceName"]
                             self.__devices.append(device_information)
 
-                        log.debug(data["address"].addrType)
+                        self._log.debug(data["address"].addrType)
                     except Exception as e:
-                        log.exception(e)
+                        self._log.exception(e)
 
     def __get_requests_configs(self, device):
         result = {"attribute_updates": [], "server_side_rpc": []}

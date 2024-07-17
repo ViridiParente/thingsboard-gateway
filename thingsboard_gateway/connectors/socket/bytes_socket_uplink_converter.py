@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -12,17 +12,14 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
-from thingsboard_gateway.connectors.socket.socket_uplink_converter import SocketUplinkConverter, log
+from thingsboard_gateway.connectors.socket.socket_uplink_converter import SocketUplinkConverter
 from thingsboard_gateway.gateway.statistics_service import StatisticsService
 
 
 class BytesSocketUplinkConverter(SocketUplinkConverter):
-    def __init__(self, config):
+    def __init__(self, config, logger):
+        self._log = logger
         self.__config = config
-        self.dict_result = {
-            "deviceName": config['deviceName'],
-            "deviceType": config['deviceType']
-        }
 
     @StatisticsService.CollectStatistics(start_stat_type='receivedBytesFromDevices',
                                          end_stat_type='convertedBytesFromDevice')
@@ -30,9 +27,14 @@ class BytesSocketUplinkConverter(SocketUplinkConverter):
         if data is None:
             return {}
 
+        dict_result = {
+            "deviceName": self.__config['deviceName'],
+            "deviceType": self.__config['deviceType']
+        }
+
         try:
-            self.dict_result["telemetry"] = []
-            self.dict_result["attributes"] = []
+            dict_result["telemetry"] = []
+            dict_result["attributes"] = []
 
             for section in ('telemetry', 'attributes'):
                 for item in config[section]:
@@ -42,21 +44,23 @@ class BytesSocketUplinkConverter(SocketUplinkConverter):
 
                         byte_to = byte_to if byte_to != -1 else len(data)
                         converted_data = data[byte_from:byte_to]
-
-                        try:
-                            converted_data = converted_data.replace(b"\x00", b'').decode(config['encoding'])
-                        except UnicodeDecodeError:
-                            converted_data = str(converted_data)
+                        if config['encoding'] == 'hex':
+                            converted_data = converted_data.hex()
+                        else:
+                            try:
+                                converted_data = converted_data.replace(b"\x00", b'').decode(config['encoding'])
+                            except UnicodeDecodeError:
+                                converted_data = str(converted_data)
 
                         if item.get('key') is not None:
-                            self.dict_result[section].append(
+                            dict_result[section].append(
                                 {item['key']: converted_data})
                         else:
-                            log.error('Key for %s not found in config: %s', config['type'], config['section_config'])
+                            self._log.error('Key for %s not found in config: %s', config['type'], config['section_config'])
                     except Exception as e:
-                        log.exception(e)
+                        self._log.exception(e)
         except Exception as e:
-            log.exception(e)
+            self._log.exception(e)
 
-        log.debug(self.dict_result)
-        return self.dict_result
+        self._log.debug(dict_result)
+        return dict_result

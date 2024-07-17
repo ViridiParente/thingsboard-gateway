@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -24,10 +24,10 @@ from time import sleep
 
 from simplejson import dumps
 
-from thingsboard_gateway.connectors.connector import Connector, log
+from thingsboard_gateway.connectors.connector import Connector
 from thingsboard_gateway.gateway.statistics_service import StatisticsService
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
-from thingsboard_gateway.connectors.ocpp.charge_point import ChargePoint
+from thingsboard_gateway.tb_utility.tb_logger import init_logger
 
 try:
     import ocpp
@@ -44,6 +44,7 @@ except ImportError:
     import websockets
 
 from ocpp.v16 import call
+from thingsboard_gateway.connectors.ocpp.charge_point import ChargePoint
 
 
 class NotAuthorized(Exception):
@@ -56,15 +57,17 @@ class OcppConnector(Connector, Thread):
 
     def __init__(self, gateway, config, connector_type):
         super().__init__()
-        self._log = log
+        self._config = config
+        self.__id = self._config.get('id')
         self._central_system_config = config['centralSystem']
         self._charge_points_config = config.get('chargePoints', [])
         self._connector_type = connector_type
         self.statistics = {'MessagesReceived': 0,
                            'MessagesSent': 0}
         self._gateway = gateway
-        self.setName(self._central_system_config.get("name", 'OCPP Connector ' + ''.join(
-            choice(ascii_lowercase) for _ in range(5))))
+        self.name = self._config.get("name", 'OCPP Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5)))
+        self._log = init_logger(self._gateway, self.name, self._config.get('logLevel', 'INFO'),
+                                enable_remote_logging=self._config.get('enableRemoteLogging', False))
 
         self._default_converters = {'uplink': 'OcppUplinkConverter'}
         self._server = None
@@ -95,13 +98,17 @@ class OcppConnector(Connector, Thread):
     def open(self):
         self.__stopped = False
         self.start()
-        log.info("Starting OCPP Connector")
+        self._log.info("Starting OCPP Connector")
+
+    def get_type(self):
+        return self._connector_type
 
     def run(self):
         self._data_convert_thread.start()
         self._data_send_thread.start()
 
-        self.__loop.run_until_complete(self.start_server())
+        self.__loop.create_task(self.start_server())
+        self.__loop.run_forever()
 
     async def start_server(self):
         host = self._central_system_config.get('host', '0.0.0.0')
@@ -175,7 +182,7 @@ class OcppConnector(Connector, Thread):
         if is_valid:
             uplink_converter_name = cp_config.get('extension', self._default_converters['uplink'])
             cp = ChargePoint(charge_point_id, websocket, {**cp_config, 'uplink_converter_name': uplink_converter_name},
-                             OcppConnector._callback)
+                             OcppConnector._callback, self._log)
             cp.authorized = True
 
             self._log.info('Connected Charge Point with id: %s', charge_point_id)
@@ -203,21 +210,29 @@ class OcppConnector(Connector, Thread):
         self.__stopped = True
         self.__connected = False
 
-        task = self.__loop.create_task(self._close_cp_connections())
-        while not task.done():
-            sleep(.2)
+        tasks = asyncio.all_tasks(self.__loop)
+        for task in tasks:
+            task.cancel()
+
+        for socket in self._server.server.sockets:
+            socket._sock.close()
+
+        self.__loop.stop()
 
         self._log.info('%s has been stopped.', self.get_name())
+        self._log.stop()
 
-    async def _close_cp_connections(self):
-        for cp in self._connected_charge_points:
-            await cp.close()
+    def get_id(self):
+        return self.__id
 
     def get_name(self):
         return self.name
 
     def is_connected(self):
         return self.__connected
+
+    def is_stopped(self):
+        return self.__stopped
 
     @classmethod
     def _callback(cls, data):
@@ -239,7 +254,7 @@ class OcppConnector(Connector, Thread):
         while not self.__stopped:
             if not self.DATA_TO_SEND.empty():
                 converted_data = self.DATA_TO_SEND.get()
-                self._gateway.send_to_storage(self.name, converted_data)
+                self._gateway.send_to_storage(self.name, self.get_id(), converted_data)
                 self.statistics['MessagesSent'] += 1
                 self._log.info("Data to ThingsBoard: %s", converted_data)
 

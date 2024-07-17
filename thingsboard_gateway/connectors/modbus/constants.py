@@ -1,4 +1,4 @@
-#      Copyright 2022. ThingsBoard
+#      Copyright 2024. ThingsBoard
 #
 #      Licensed under the Apache License, Version 2.0 (the "License");
 #      you may not use this file except in compliance with the License.
@@ -65,3 +65,7 @@ RETRY_ON_INVALID_PARAMETER = "retryOnInvalid"
 
 PAYLOAD_PARAMETER = "payload"
 TAG_PARAMETER = "tag"
+
+# Default values
+
+TIMEOUT = 30

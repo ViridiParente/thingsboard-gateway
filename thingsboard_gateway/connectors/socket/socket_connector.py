@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -15,17 +15,18 @@
 import socket
 from queue import Queue
 from random import choice
-from re import findall
+from re import findall, compile, fullmatch
 from string import ascii_lowercase
 from threading import Thread
 from time import sleep
 
 from simplejson import dumps
 
-from thingsboard_gateway.connectors.connector import Connector, log
+from thingsboard_gateway.connectors.connector import Connector
 from thingsboard_gateway.tb_utility.tb_loader import TBModuleLoader
 from thingsboard_gateway.gateway.statistics_service import StatisticsService
 from thingsboard_gateway.connectors.socket.socket_decorators import CustomCollectStatistics
+from thingsboard_gateway.tb_utility.tb_logger import init_logger
 
 SOCKET_TYPE = {
     'TCP': socket.SOCK_STREAM,
@@ -37,13 +38,15 @@ DEFAULT_UPLINK_CONVERTER = 'BytesSocketUplinkConverter'
 class SocketConnector(Connector, Thread):
     def __init__(self, gateway, config, connector_type):
         super().__init__()
-        self.__log = log
         self.__config = config
+        self.__id = self.__config.get('id')
         self._connector_type = connector_type
         self.statistics = {'MessagesReceived': 0,
                            'MessagesSent': 0}
         self.__gateway = gateway
-        self.setName(config.get("name", 'TCP Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5))))
+        self.name = config.get("name", 'TCP Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5)))
+        self.__log = init_logger(self.__gateway, self.name, self.__config.get('logLevel', 'INFO'),
+                                 enable_remote_logging=self.__config.get('enableRemoteLogging', False))
         self.daemon = True
         self.__stopped = False
         self._connected = False
@@ -53,22 +56,35 @@ class SocketConnector(Connector, Thread):
         self.__socket_port = config['port']
         self.__socket_buff_size = config['bufferSize']
         self.__socket = socket.socket(socket.AF_INET, SOCKET_TYPE[self.__socket_type])
+        self.__socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.__converting_requests = Queue(-1)
 
-        self.__devices = self.__convert_devices_list()
+        self.__devices, self.__device_converters = self.__convert_devices_list()
         self.__connections = {}
 
     def __convert_devices_list(self):
         devices = self.__config.get('devices', [])
 
         converted_devices = {}
+        converters_for_devices = {}
         for device in devices:
-            address = device.get('address')
+            address = device.get('addressFilter', device.get('address', None))
+            if address is None:
+                self.__log.error('Device %s has no addressFilter or address', device.get('deviceName', 'Unknown'))
+                continue
+
+            address = address.replace('*', '.*')
+            address_key = address
+            try:
+                address_key = compile(address)
+            except Exception as e:
+                self.__log.debug("Cannot compile device address with regex! %r", e)
+
             module = self.__load_converter(device)
             converter = module(
                 {'deviceName': device['deviceName'],
-                 'deviceType': device.get('deviceType', 'default')}) if module else None
-            device['converter'] = converter
+                 'deviceType': device.get('deviceType', 'default')}, self.__log) if module else None
+            converters_for_devices[address_key] = converter
 
             # validate attributeRequests requestExpression
             attr_requests = device.get('attributeRequests', [])
@@ -78,20 +94,19 @@ class SocketConnector(Connector, Thread):
                     'client': self.__gateway.tb_client.client.gw_request_client_attributes,
                     'shared': self.__gateway.tb_client.client.gw_request_shared_attributes
                 }
+            converted_devices[address_key] = device
 
-            converted_devices[address] = device
-
-        return converted_devices
+        return converted_devices, converters_for_devices
 
     def __load_converter(self, device):
         converter_class_name = device.get('converter', DEFAULT_UPLINK_CONVERTER)
         module = TBModuleLoader.import_module(self._connector_type, converter_class_name)
 
         if module:
-            log.debug('Converter %s for device %s - found!', converter_class_name, self.name)
+            self.__log.debug('Converter %s for device %s - found!', converter_class_name, self.name)
             return module
 
-        log.error("Cannot find converter for %s device", self.name)
+        self.__log.error("Cannot find converter for %s device", self.name)
         return None
 
     def __validate_attr_requests(self, attr_requests):
@@ -144,7 +159,7 @@ class SocketConnector(Connector, Thread):
             try:
                 self.__socket.bind((self.__socket_address, self.__socket_port))
             except OSError:
-                log.error('Address already in use. Reconnecting...')
+                self.__log.error('Address already in use. Reconnecting...')
                 sleep(3)
             else:
                 self.__bind = True
@@ -157,14 +172,20 @@ class SocketConnector(Connector, Thread):
         while not self.__stopped:
             try:
                 if self.__socket_type == 'TCP':
-                    conn, address = self.__socket.accept()
-                    self.__connections[address] = conn
+                    try:
+                        if self.__socket.fileno() != -1:  # Check if the socket is open
+                            conn, address = self.__socket.accept()
+                            self.__connections[address] = conn
 
-                    self.__log.debug('New connection %s established', address)
-                    thread = Thread(target=self.__process_tcp_connection, daemon=True,
-                                    name=f'Processing {address} connection',
-                                    args=(conn, address))
-                    thread.start()
+                            self.__log.debug('New connection %s established', address)
+                            thread = Thread(target=self.__process_tcp_connection, daemon=True,
+                                            name=f'Processing {address} connection',
+                                            args=(conn, address))
+                            thread.start()
+                    except OSError as e:
+                        if self.__stopped:
+                            break
+                        self.__log.error('Error accepting connection: %s', e)
                 else:
                     data, client_address = self.__socket.recvfrom(self.__socket_buff_size)
                     self.__converting_requests.put((client_address, data))
@@ -188,41 +209,44 @@ class SocketConnector(Connector, Thread):
         while not self.__stopped:
             if not self.__converting_requests.empty():
                 (address, port), data = self.__converting_requests.get()
-
-                device = self.__devices.get(f'{address}:{port}', None)
-                if not device:
-                    self.__log.error('Can\'t convert data from %s:%s - not in config file', address, port)
-
-                # check data for attribute requests
-                is_attribute_request = False
-                attr_requests = device.get('attributeRequests', [])
-                if len(attr_requests):
-                    for attr in attr_requests:
-                        equal = data
-                        if attr['haveIndex']:
-                            if attr.get('requestIndexFrom') and attr.get('requestIndexTo'):
-                                index_from = int(attr['requestIndexFrom']) if attr['requestIndexFrom'] != '' else None
-                                index_to = int(attr['requestIndexTo']) if attr['requestIndexTo'] != '' else None
-                                equal = data[index_from:index_to]
-                            else:
-                                equal = data[int(attr['requestIndex'])]
-
-                        if attr['requestEqual'] == equal.decode('utf-8'):
-                            is_attribute_request = True
-                            self.__process_attribute_request(device['deviceName'], attr, data)
-
-                    if is_attribute_request:
+                for conf_device_address in self.__devices:
+                    client_address = f"{address}:{port}"
+                    if client_address != conf_device_address and not fullmatch(conf_device_address, client_address):
                         continue
+                    device = self.__devices.get(conf_device_address)
+                    device['address'] = client_address
 
-                self.__convert_data(device, data)
+                    # check data for attribute requests
+                    is_attribute_request = False
+                    attr_requests = device.get('attributeRequests', [])
+                    if len(attr_requests):
+                        for attr in attr_requests:
+                            equal = data
+                            if attr['haveIndex']:
+                                if attr.get('requestIndexFrom') and attr.get('requestIndexTo'):
+                                    index_from = int(attr['requestIndexFrom']) if attr['requestIndexFrom'] != '' else None
+                                    index_to = int(attr['requestIndexTo']) if attr['requestIndexTo'] != '' else None
+                                    equal = data[index_from:index_to]
+                                else:
+                                    equal = data[int(attr['requestIndex'])]
+    
+                            if attr['requestEqual'] == equal.decode('utf-8'):
+                                is_attribute_request = True
+                                self.__process_attribute_request(device['deviceName'], attr, data)
+    
+                        if is_attribute_request:
+                            continue
+
+                    converter = self.__device_converters.get(conf_device_address)
+                    self.__convert_data(device, data, converter)
 
             sleep(.2)
 
-    def __convert_data(self, device, data):
+    def __convert_data(self, device, data, converter):
         address, port = device['address'].split(':')
-        converter = device['converter']
         if not converter:
             self.__log.error('Converter not found for %s:%s', address, port)
+            return
 
         try:
             device_config = {
@@ -235,9 +259,9 @@ class SocketConnector(Connector, Thread):
             self.statistics['MessagesReceived'] = self.statistics['MessagesReceived'] + 1
 
             if converted_data is not None:
-                self.__gateway.send_to_storage(self.get_name(), converted_data)
+                self.__gateway.send_to_storage(self.get_name(), self.get_id(), converted_data)
                 self.statistics['MessagesSent'] = self.statistics['MessagesSent'] + 1
-                log.info('Data to ThingsBoard %s', converted_data)
+                self.__log.info('Data to ThingsBoard %s', converted_data)
         except Exception as e:
             self.__log.exception(e)
 
@@ -285,16 +309,34 @@ class SocketConnector(Connector, Thread):
     def close(self):
         self.__stopped = True
         self._connected = False
+        self.__log.info('%s connector has been stopped.', self.get_name())
         self.__connections = {}
+        while self.__socket.fileno() != -1:
+            try:
+                self.__socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # Ignore errors when socket is already closed
+            self.__socket.close()
+            sleep(0.01)
+        self.__log.stop()
 
     def get_name(self):
         return self.name
 
+    def get_type(self):
+        return self._connector_type
+
     def is_connected(self):
         return self._connected
 
+    def is_stopped(self):
+        return self.__stopped
+
     def get_config(self):
         return self.__config
+
+    def get_id(self):
+        return self.__id
 
     @CustomCollectStatistics(start_stat_type='allBytesSentToDevices')
     def __write_value_via_tcp(self, address, port, value):
@@ -309,8 +351,7 @@ class SocketConnector(Connector, Thread):
                 new_socket.close()
                 return 'ok'
             except ConnectionRefusedError as e:
-                self.__log.error('Can\'t connect to %s:%s', address, port)
-                self.__log.exception(e)
+                self.__log.error('Can\'t connect to %s:%s\n %s', address, port, e)
                 return e
 
     @staticmethod
@@ -338,10 +379,24 @@ class SocketConnector(Connector, Thread):
     @StatisticsService.CollectAllReceivedBytesStatistics(start_stat_type='allReceivedBytesFromTB')
     def server_side_rpc_handler(self, content):
         try:
+            if content.get('data') is None:
+                content['data'] = {'params': content['params'], 'method': content['method']}
+
+            rpc_method = content['data']['method']
+
+            # check if RPC type is connector RPC (can be only 'set')
+            try:
+                (connector_type, rpc_method_name) = rpc_method.split('_')
+                if connector_type == self._connector_type:
+                    rpc_method = rpc_method_name
+                    content['device'] = content['params'].split(' ')[0].split('=')[-1]
+            except (IndexError, ValueError):
+                pass
+
             device = tuple(filter(lambda item: item['deviceName'] == content['device'], self.__config['devices']))[0]
 
             # check if RPC method is reserved set
-            if content['data']['method'] == 'set':
+            if rpc_method == 'set':
                 params = {}
                 for param in content['data']['params'].split(';'):
                     try:
@@ -359,12 +414,13 @@ class SocketConnector(Connector, Thread):
                     else:
                         self.__write_value_via_udp(params['address'], int(params['port']), params['value'])
                 except KeyError:
-                    self.__gateway.send_rpc_reply(content['device'], content['data']['id'], 'Not enough params')
+                    self.__gateway.send_rpc_reply(device=device, req_id=content['data'].get('id'),
+                                                  content='Not enough params')
                 except ValueError:
-                    self.__gateway.send_rpc_reply(content['device'], content['data']['id'],
-                                                  'Param "port" have to be int type')
+                    self.__gateway.send_rpc_reply(device=device, req_id=content['data']['id'],
+                                                  content='Param "port" have to be int type')
                 else:
-                    self.__gateway.send_rpc_reply(content['device'], content['data']['id'], str(result))
+                    self.__gateway.send_rpc_reply(device=device, req_id=content['data'].get('id'), content=str(result))
             else:
                 for rpc_config in device['serverSideRpc']:
                     for (key, value) in content['data'].items():

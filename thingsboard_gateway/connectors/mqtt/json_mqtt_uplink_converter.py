@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -17,19 +17,27 @@ from re import search
 from simplejson import dumps
 
 from thingsboard_gateway.gateway.constants import SEND_ON_CHANGE_PARAMETER
-from thingsboard_gateway.connectors.mqtt.mqtt_uplink_converter import MqttUplinkConverter, log
+from thingsboard_gateway.connectors.mqtt.mqtt_uplink_converter import MqttUplinkConverter
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 from thingsboard_gateway.gateway.statistics_service import StatisticsService
 
 
 class JsonMqttUplinkConverter(MqttUplinkConverter):
-    def __init__(self, config):
+    CONFIGURATION_OPTION_USE_EVAL = "useEval"
+
+    def __init__(self, config, logger):
+        self._log = logger
         self.__config = config.get('converter')
         self.__send_data_on_change = self.__config.get(SEND_ON_CHANGE_PARAMETER)
+        self.__use_eval = self.__config.get(self.CONFIGURATION_OPTION_USE_EVAL, False)
 
     @property
     def config(self):
         return self.__config
+
+    @config.setter
+    def config(self, value):
+        self.__config = value
 
     @StatisticsService.CollectStatistics(start_stat_type='receivedBytesFromDevices',
                                          end_stat_type='convertedBytesFromDevice')
@@ -38,6 +46,7 @@ class JsonMqttUplinkConverter(MqttUplinkConverter):
             converted_data = []
             for item in data:
                 converted_data.append(self._convert_single_item(topic, item))
+            self._log.debug(converted_data)
             return converted_data
         else:
             return self._convert_single_item(topic, data)
@@ -76,25 +85,22 @@ class JsonMqttUplinkConverter(MqttUplinkConverter):
 
                         full_key = datatype_config["key"]
                         for (key, key_tag) in zip(keys, keys_tags):
-                            is_valid_key = "${" in datatype_config["key"] and "}" in \
-                                           datatype_config["key"]
-                            full_key = full_key.replace('${' + str(key_tag) + '}',
-                                                        str(key)) if is_valid_key else key_tag
+                            is_valid_key = "${" in datatype_config["key"] and "}" in datatype_config["key"]
+                            full_key = full_key.replace('${' + str(key_tag) + '}', str(key)) if is_valid_key else key_tag
 
                         full_value = datatype_config["value"]
                         for (value, value_tag) in zip(values, values_tags):
-                            is_valid_value = "${" in datatype_config["value"] and "}" in \
-                                             datatype_config["value"]
-
-                            full_value = full_value.replace('${' + str(value_tag) + '}',
-                                                            str(value)) if is_valid_value else value
+                            is_valid_value = "${" in datatype_config["value"] and "}" in datatype_config["value"]
+                            full_value = full_value.replace('${' + str(value_tag) + '}', str(value)) if is_valid_value else value
 
                         if full_key != 'None' and full_value != 'None':
                             dict_result[datatypes[datatype]].append(
-                                self.create_timeseries_record(full_key, full_value, timestamp))
+                                self.create_timeseries_record(full_key, TBUtility.convert_data_type(
+                                    full_value, datatype_config["type"], self.__use_eval), timestamp))
         except Exception as e:
-            log.error('Error in converter, for config: \n%s\n and message: \n%s\n', dumps(self.__config), str(data))
-            log.exception(e)
+            self._log.error('Error in converter, for config: \n%s\n and message: \n%s\n %s', dumps(self.__config),
+                            str(data), e)
+        self._log.debug(dict_result)
         return dict_result
 
     @staticmethod
@@ -102,22 +108,23 @@ class JsonMqttUplinkConverter(MqttUplinkConverter):
         value_item = {key: value}
         return {"ts": timestamp, 'values': value_item} if timestamp else value_item
 
-    @staticmethod
-    def parse_device_name(topic, data, config):
-        return JsonMqttUplinkConverter.parse_device_info(
-            topic, data, config, "deviceNameJsonExpression", "deviceNameTopicExpression")
+    def parse_device_name(self, topic, data, config):
+        return self.parse_device_info(
+            topic, data, config, "deviceNameExpressionSource", "deviceNameExpression")
 
-    @staticmethod
-    def parse_device_type(topic, data, config):
-        return JsonMqttUplinkConverter.parse_device_info(
-            topic, data, config, "deviceTypeJsonExpression", "deviceTypeTopicExpression")
+    def parse_device_type(self, topic, data, config):
+        return self.parse_device_info(
+            topic, data, config, "deviceProfileExpressionSource", "deviceProfileExpression")
 
-    @staticmethod
-    def parse_device_info(topic, data, config, json_expression_config_name, topic_expression_config_name):
+    def parse_device_info(self, topic, data, config, expression_source, expression):
         result = None
+        device_info = config.get('deviceInfo', {})
+
+        expression = device_info.get('deviceNameExpression') if expression == 'deviceNameExpression' \
+            else device_info.get('deviceProfileExpression')
+
         try:
-            if config.get(json_expression_config_name) is not None:
-                expression = config.get(json_expression_config_name)
+            if device_info.get(expression_source) == 'message' or device_info.get(expression_source) == 'constant':
                 result_tags = TBUtility.get_values(expression, data, get_tag=True)
                 result_values = TBUtility.get_values(expression, data, expression_instead_none=True)
 
@@ -126,19 +133,17 @@ class JsonMqttUplinkConverter(MqttUplinkConverter):
                     is_valid_key = "${" in expression and "}" in expression
                     result = result.replace('${' + str(result_tag) + '}',
                                             str(result_value)) if is_valid_key else result_tag
-            elif config.get(topic_expression_config_name) is not None:
-                expression = config.get(topic_expression_config_name)
+            elif device_info.get(expression_source) == 'topic':
                 search_result = search(expression, topic)
                 if search_result is not None:
                     result = search_result.group(0)
                 else:
-                    log.debug(
+                    self._log.debug(
                         "Regular expression result is None. deviceNameTopicExpression parameter will be interpreted "
                         "as a deviceName\n Topic: %s\nRegex: %s", topic, expression)
                     result = expression
             else:
-                log.error("The expression for looking \"deviceName\" not found in config %s", dumps(config))
+                self._log.error("The expression for looking \"deviceName\" not found in config %s", dumps(config))
         except Exception as e:
-            log.error('Error in converter, for config: \n%s\n and message: \n%s\n', dumps(config), data)
-            log.exception(e)
+            self._log.error('Error in converter, for config: \n%s\n and message: \n%s\n %s', dumps(config), data, e)
         return result

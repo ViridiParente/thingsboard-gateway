@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -37,8 +37,7 @@ class GrpcSocketConnector(GwGrpcConnector):
         self.__config = self.connection_config['config'][list(self.connection_config['config'].keys())[0]]
         self._connector_type = 'socket'
         self.__bind = False
-        self.setName(
-            self.__config.get("name", 'TCP Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5))))
+        self.name = self.__config.get("name", 'TCP Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5)))
         self.__socket_type = self.__config['type'].upper()
         self.__socket_address = self.__config['address']
         self.__socket_port = self.__config['port']
@@ -271,6 +270,12 @@ class GrpcSocketConnector(GwGrpcConnector):
         super(GrpcSocketConnector, self).stop()
         self.__socket.shutdown(socket.SHUT_RDWR)
         self.__socket.close()
+
+    def get_name(self):
+        return self.name
+
+    def get_type(self):
+        return self._connector_type
 
 
 if __name__ == '__main__':

@@ -1,4 +1,4 @@
-#      Copyright 2022. ThingsBoard
+#      Copyright 2024. ThingsBoard
 #  #
 #      Licensed under the Apache License, Version 2.0 (the "License");
 #      you may not use this file except in compliance with the License.
@@ -12,7 +12,6 @@
 #      See the License for the specific language governing permissions and
 #      limitations under the License.
 
-VERSION = "3.2"
 
 # Service constants
 
@@ -30,6 +29,12 @@ CONFIG_DEVICES_SECTION_PARAMETER = "devices"
 
 CONNECTED_DEVICES_FILENAME = "connected_devices.json"
 PERSISTENT_GRPC_CONNECTORS_KEY_FILENAME = "persistent_keys.json"
+
+RENAMING_PARAMETER = "renaming"
+CONNECTOR_ID_PARAMETER = "connectorId"
+CONNECTOR_NAME_PARAMETER = "connectorName"
+
+SECURITY_VAR = ('accessToken', 'caCert', 'privateKey', 'cert', 'clientId', 'username', 'password')
 
 # Data parameter constants
 
@@ -57,3 +62,6 @@ RPC_ID_PARAMETER = "id"
 RPC_METHOD_PARAMETER = "method"
 RPC_PARAMS_PARAMETER = "params"
 DATA_PARAMETER = "data"
+
+# Attribute constants
+ATTRIBUTES_FOR_REQUEST = ["RemoteLoggingLevel", "general_configuration", "storage_configuration", "grpc_configuration", "logs_configuration", "active_connectors"]

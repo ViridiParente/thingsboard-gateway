@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -74,9 +74,9 @@ class EventStorageReader:
                         # self.write_info_to_state_file(self.new_pos)
                         if next_file is None:
                             break
-                        self.delete_read_file(previous_file)
                         if self.buffered_reader is not None:
                             self.buffered_reader.close()
+                        self.delete_read_file(previous_file)
                         # self.buffered_reader = None
                         self.new_pos = EventStorageReaderPointer(next_file, 0)
                         self.get_or_init_buffered_reader(self.new_pos)

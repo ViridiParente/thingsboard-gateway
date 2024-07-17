@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -16,22 +16,23 @@ import struct
 
 from simplejson import dumps
 
-from thingsboard_gateway.connectors.request.request_converter import RequestConverter, log
+from thingsboard_gateway.connectors.request.request_converter import RequestConverter
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 
 
 class CustomRequestUplinkConverter(RequestConverter):
-    def __init__(self, config):
+    def __init__(self, config, logger):
+        self._log = logger
         self.__config = config.get('converter')
-        self.dict_result = {}
 
     def convert(self, _, body):
         try:
             data = body["data"]["value"]
-            self.dict_result["deviceName"] = TBUtility.get_value(self.__config.get("deviceNameJsonExpression"), body, expression_instead_none=True)
-            self.dict_result["deviceType"] = TBUtility.get_value(self.__config.get("deviceTypeJsonExpression"), body, expression_instead_none=True)
-            self.dict_result["attributes"] = []
-            self.dict_result["telemetry"] = []
+            dict_result = {}
+            dict_result["deviceName"] = TBUtility.get_value(self.__config.get("deviceNameJsonExpression"), body, expression_instead_none=True)
+            dict_result["deviceType"] = TBUtility.get_value(self.__config.get("deviceTypeJsonExpression"), body, expression_instead_none=True)
+            dict_result["attributes"] = []
+            dict_result["telemetry"] = []
             converted_bytes = bytearray.fromhex(data)
             if self.__config.get("extension-config") is not None:
                 for telemetry_key in self.__config["extension-config"]:
@@ -55,12 +56,12 @@ class CustomRequestUplinkConverter(RequestConverter):
                         telemetry_to_send = {
                             telemetry_key["key"]: value}  # creating telemetry data for sending into Thingsboard
                         # current_byte_position += self.__config["extension-config"][telemetry_key]
-                        self.dict_result["telemetry"].append(telemetry_to_send)  # adding data to telemetry array
+                        dict_result["telemetry"].append(telemetry_to_send)  # adding data to telemetry array
             else:
-                self.dict_result["telemetry"] = {
+                dict_result["telemetry"] = {
                     "data": int(body, 0)}  # if no specific configuration in config file - just send data which received
-            return self.dict_result
+            return dict_result
 
         except Exception as e:
-            log.error('Error in converter, for config: \n%s\n and message: \n%s\n', dumps(self.__config), body)
-            log.exception(e)
+            self._log.error('Error in converter, for config: \n%s\n and message: \n%s\n', dumps(self.__config), body)
+            self._log.exception(e)

@@ -1,14 +1,15 @@
 from pprint import pformat
 from re import findall
 
-from thingsboard_gateway.connectors.ble.ble_uplink_converter import BLEUplinkConverter, log
+from thingsboard_gateway.connectors.ble.ble_uplink_converter import BLEUplinkConverter
 from thingsboard_gateway.gateway.statistics_service import StatisticsService
 
 
 class HexBytesBLEUplinkConverter(BLEUplinkConverter):
-    def __init__(self, config):
+    def __init__(self, config, logger):
+        self._log = logger
         self.__config = config
-        self.dict_result = {"deviceName": config['deviceName'],
+        dict_result = {"deviceName": config['deviceName'],
                             "deviceType": config['deviceType']
                             }
 
@@ -16,9 +17,11 @@ class HexBytesBLEUplinkConverter(BLEUplinkConverter):
         if data is None:
             return {}
 
+        dict_result = {}
+
         try:
-            self.dict_result["telemetry"] = []
-            self.dict_result["attributes"] = []
+            dict_result["telemetry"] = []
+            dict_result["attributes"] = []
 
             for section in ('telemetry', 'attributes'):
                 for item in config[section]:
@@ -43,14 +46,13 @@ class HexBytesBLEUplinkConverter(BLEUplinkConverter):
                                 value = eval(item['compute'], globals(), {'value': value})
 
                         if item.get('key') is not None:
-                            self.dict_result[section].append({item['key']: value})
+                            dict_result[section].append({item['key']: value})
                         else:
-                            log.error('Key for %s not found in config: %s', config['type'], config[section])
+                            self._log.error('Key for %s not found in config: %s', config['type'], config[section])
                     except Exception as e:
-                        log.error('\nException caught when processing data for %s\n\n', pformat(config))
-                        log.exception(e)
+                        self._log.error('\nException caught when processing data for %s\n\n %s', pformat(config), e)
         except Exception as e:
-            log.exception(e)
+            self._log.exception(e)
 
-        log.debug(self.dict_result)
-        return self.dict_result
+        self._log.debug(dict_result)
+        return dict_result

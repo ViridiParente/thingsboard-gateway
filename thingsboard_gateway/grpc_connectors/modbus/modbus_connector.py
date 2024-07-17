@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ except ImportError:
 
 if installation_required:
     print("Modbus library not found - installing...")
-    TBUtility.install_package("pymodbus", ">=3.0.0")
+    TBUtility.install_package("pymodbus", "3.0.0")
     TBUtility.install_package('pyserial')
     TBUtility.install_package('pyserial-asyncio')
 
@@ -77,8 +77,7 @@ class GrpcModbusConnector(GwGrpcConnector):
         self.__config = self.connection_config['config'][list(self.connection_config['config'].keys())[0]]
         self._connector_type = 'modbus'
         self._connector_key = self.connection_config['grpc_key']
-        self.setName(
-            self.__config.get("name", 'Modbus Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5))))
+        self.name = self.__config.get("name", 'Modbus Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5)))
 
         self.statistics = {STATISTIC_MESSAGE_RECEIVED_PARAMETER: 0,
                            STATISTIC_MESSAGE_SENT_PARAMETER: 0}
@@ -172,7 +171,7 @@ class GrpcModbusConnector(GwGrpcConnector):
     def __load_slaves(self):
         self.__slaves = [
             Slave(**{**device, 'connector': self, 'connector_key': self._connector_key,
-                     'callback': GrpcModbusConnector.callback})
+                     'callback': GrpcModbusConnector.callback, 'logger': log})
             for device in self.__config.get('master', {'slaves': []}).get('slaves', [])]
 
     @classmethod
@@ -189,6 +188,9 @@ class GrpcModbusConnector(GwGrpcConnector):
 
     def get_name(self):
         return self.name
+
+    def get_type(self):
+        return self._connector_type
 
     def __process_slaves(self):
         device = GrpcModbusConnector.process_requests.get()

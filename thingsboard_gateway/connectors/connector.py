@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -12,11 +12,9 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
-import logging
 from abc import ABC, abstractmethod
-from thingsboard_gateway.gateway.constants import DEFAULT_SEND_ON_CHANGE_INFINITE_TTL_VALUE, DEFAULT_SEND_ON_CHANGE_VALUE
-
-log = logging.getLogger("connector")
+from thingsboard_gateway.gateway.constants import DEFAULT_SEND_ON_CHANGE_INFINITE_TTL_VALUE, \
+    DEFAULT_SEND_ON_CHANGE_VALUE
 
 
 class Connector(ABC):
@@ -30,7 +28,15 @@ class Connector(ABC):
         pass
 
     @abstractmethod
+    def get_id(self):
+        pass
+
+    @abstractmethod
     def get_name(self):
+        pass
+
+    @abstractmethod
+    def get_type(self):
         pass
 
     @abstractmethod
@@ -39,6 +45,10 @@ class Connector(ABC):
 
     @abstractmethod
     def is_connected(self):
+        pass
+
+    @abstractmethod
+    def is_stopped(self):
         pass
 
     @abstractmethod

@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -30,11 +30,11 @@ def main():
     if hot_reload:
         HotReloader(TBGatewayService)
     else:
-        TBGatewayService(path.dirname(path.abspath(__file__)) + '/config/tb_gateway.yaml'.replace('/', path.sep))
+        TBGatewayService(path.dirname(path.abspath(__file__)) + '/config/tb_gateway.json'.replace('/', path.sep))
 
 
 def daemon():
-    TBGatewayService("/etc/thingsboard-gateway/config/tb_gateway.yaml".replace('/', path.sep))
+    TBGatewayService("/etc/thingsboard-gateway/config/tb_gateway.json".replace('/', path.sep))
 
 
 if __name__ == '__main__':

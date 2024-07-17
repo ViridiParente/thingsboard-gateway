@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -20,16 +20,18 @@ from string import ascii_lowercase
 from threading import Thread
 from time import sleep
 
-from thingsboard_gateway.connectors.connector import Connector, log
+from thingsboard_gateway.connectors.connector import Connector
+from thingsboard_gateway.connectors.xmpp.device import Device
 from thingsboard_gateway.tb_utility.tb_loader import TBModuleLoader
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 from thingsboard_gateway.gateway.statistics_service import StatisticsService
+from thingsboard_gateway.tb_utility.tb_logger import init_logger
 
 try:
     from slixmpp import ClientXMPP
 except ImportError:
     print("Slixmpp library not found - installing...")
-    TBUtility.install_package("bleak")
+    TBUtility.install_package("slixmpp")
     from slixmpp import ClientXMPP
 
 from slixmpp.exceptions import IqError, IqTimeout
@@ -44,7 +46,6 @@ class XMPPConnector(Connector, Thread):
     def __init__(self, gateway, config, connector_type):
         self.statistics = {'MessagesReceived': 0,
                            'MessagesSent': 0}
-        self.__log = log
 
         super().__init__()
 
@@ -52,8 +53,12 @@ class XMPPConnector(Connector, Thread):
         self.__gateway = gateway
 
         self.__config = config
+        self.__id = self.__config.get('id')
         self._server_config = config['server']
         self._devices_config = config.get('devices', [])
+        self.name = config.get("name", 'XMPP Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5)))
+        self.__log = init_logger(self.__gateway, self.name, self.__config.get('logLevel', 'INFO'),
+                                 enable_remote_logging=self.__config.get('enableRemoteLogging', False))
 
         self._devices = {}
         self._reformat_devices_config()
@@ -61,8 +66,6 @@ class XMPPConnector(Connector, Thread):
         # devices dict for RPC and attributes updates
         # {'deviceName': 'device_jid'}
         self._available_device = {}
-
-        self.setName(config.get("name", 'XMPP Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5))))
 
         self.__stopped = False
         self._connected = False
@@ -73,15 +76,23 @@ class XMPPConnector(Connector, Thread):
     def _reformat_devices_config(self):
         for config in self._devices_config:
             try:
-                device_jid = config.pop('jid')
+                device_jid = config.get('jid')
 
                 converter_name = config.pop('converter', DEFAULT_UPLINK_CONVERTER)
                 converter = self._load_converter(converter_name)
                 if not converter:
                     continue
 
-                self._devices[device_jid] = config
-                self._devices[device_jid]['converter'] = converter(config)
+                self._devices[device_jid] = Device(
+                    jid=device_jid,
+                    device_name_expression=config['deviceNameExpression'],
+                    device_type_expression=config['deviceTypeExpression'],
+                    attributes=config.get('attributes', []),
+                    timeseries=config.get('timeseries', []),
+                    attribute_updates=config.get('attributeUpdates', []),
+                    server_side_rpc=config.get('serverSideRpc', [])
+                )
+                self._devices[device_jid].set_converter(converter(config, self.__log))
             except KeyError as e:
                 self.__log.error('Invalid configuration %s with key error %s', config, e)
                 continue
@@ -90,10 +101,10 @@ class XMPPConnector(Connector, Thread):
         module = TBModuleLoader.import_module(self._connector_type, converter_name)
 
         if module:
-            log.debug('Converter %s for device %s - found!', converter_name, self.name)
+            self.__log.debug('Converter %s for device %s - found!', converter_name, self.name)
             return module
 
-        log.error("Cannot find converter for %s device", self.name)
+        self.__log.error("Cannot find converter for %s device", self.name)
         return None
 
     def open(self):
@@ -161,7 +172,7 @@ class XMPPConnector(Connector, Thread):
                     device_jid = msg.values['from']
                     device = self._devices.get(device_jid)
                     if device:
-                        converted_data = device['converter'].convert(device, msg.values['body'])
+                        converted_data = device.converter.convert(device, msg.values['body'])
 
                         if converted_data:
                             XMPPConnector.DATA_TO_SEND.put(converted_data)
@@ -182,7 +193,7 @@ class XMPPConnector(Connector, Thread):
             if not XMPPConnector.DATA_TO_SEND.empty():
                 data = XMPPConnector.DATA_TO_SEND.get()
                 self.statistics['MessagesReceived'] = self.statistics['MessagesReceived'] + 1
-                self.__gateway.send_to_storage(self.get_name(), data)
+                self.__gateway.send_to_storage(self.get_name(), self.get_id(), data)
                 self.statistics['MessagesSent'] = self.statistics['MessagesSent'] + 1
                 self.__log.info('Data to ThingsBoard %s', data)
 
@@ -192,12 +203,22 @@ class XMPPConnector(Connector, Thread):
         self.__stopped = True
         self._connected = False
         self.__log.info('%s has been stopped.', self.get_name())
+        self.__log.stop()
+
+    def get_id(self):
+        return self.__id
 
     def get_name(self):
         return self.name
 
+    def get_type(self):
+        return self._connector_type
+
     def is_connected(self):
         return self._connected
+
+    def is_stopped(self):
+        return self.__stopped
 
     def get_config(self):
         return self.__config
@@ -216,7 +237,7 @@ class XMPPConnector(Connector, Thread):
             if not device_jid:
                 self.__log.error('Device not found')
 
-            attr_updates = self._devices[device_jid].get('attributeUpdates', [])
+            attr_updates = self._devices[device_jid].attribute_updates
             for key, value in content['data'].items():
                 for attr_conf in attr_updates:
                     if attr_conf['attributeOnThingsBoard'] == key:
@@ -236,7 +257,7 @@ class XMPPConnector(Connector, Thread):
             if not device_jid:
                 self.__log.error('Device not found')
 
-            rpcs = self._devices[device_jid].get('serverSideRpc', [])
+            rpcs = self._devices[device_jid].server_side_rpc
             for rpc_conf in rpcs:
                 if rpc_conf['methodRPC'] == content['data']['method']:
                     data_to_send_tags = TBUtility.get_values(rpc_conf.get('valueExpression'), content['data'],

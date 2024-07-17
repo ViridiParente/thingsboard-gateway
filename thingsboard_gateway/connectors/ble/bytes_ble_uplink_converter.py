@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -27,16 +27,14 @@
 from pprint import pformat
 from re import findall
 
-from thingsboard_gateway.connectors.ble.ble_uplink_converter import BLEUplinkConverter, log
+from thingsboard_gateway.connectors.ble.ble_uplink_converter import BLEUplinkConverter
 from thingsboard_gateway.gateway.statistics_service import StatisticsService
 
 
 class BytesBLEUplinkConverter(BLEUplinkConverter):
-    def __init__(self, config):
+    def __init__(self, config, logger):
+        self._log = logger
         self.__config = config
-        self.dict_result = {"deviceName": config['deviceName'],
-                            "deviceType": config['deviceType']
-                            }
 
     @StatisticsService.CollectStatistics(start_stat_type='receivedBytesFromDevices',
                                          end_stat_type='convertedBytesFromDevice')
@@ -44,9 +42,14 @@ class BytesBLEUplinkConverter(BLEUplinkConverter):
         if data is None:
             return {}
 
+        dict_result = {
+            "deviceName": self.__config['deviceName'],
+            "deviceType": self.__config['deviceType']
+        }
+
         try:
-            self.dict_result["telemetry"] = []
-            self.dict_result["attributes"] = []
+            dict_result["telemetry"] = []
+            dict_result["attributes"] = []
 
             for section in ('telemetry', 'attributes'):
                 for item in data[section]:
@@ -71,15 +74,14 @@ class BytesBLEUplinkConverter(BLEUplinkConverter):
                             converted_data = converted_data.replace(exp, data_to_replace)
 
                         if item.get('key') is not None:
-                            self.dict_result[section].append({item['key']: converted_data})
+                            dict_result[section].append({item['key']: converted_data})
                         else:
-                            log.error('Key for %s not found in config: %s', config['type'], config[section])
+                            self._log.error('Key for %s not found in config: %s', config['type'], config[section])
                     except Exception as e:
-                        log.error('\nException caught when processing data for %s\n\n', pformat(config))
-                        log.exception(e)
+                        self._log.exception('\nException caught when processing data for %s\n\n%s', pformat(config), e)
 
         except Exception as e:
-            log.exception(e)
+            self._log.exception(e)
 
-        log.debug(self.dict_result)
-        return self.dict_result
+        self._log.debug(dict_result)
+        return dict_result

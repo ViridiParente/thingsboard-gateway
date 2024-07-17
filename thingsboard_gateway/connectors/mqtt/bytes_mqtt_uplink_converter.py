@@ -3,17 +3,22 @@ from re import findall
 
 from simplejson import dumps
 
-from thingsboard_gateway.connectors.mqtt.mqtt_uplink_converter import MqttUplinkConverter, log
+from thingsboard_gateway.connectors.mqtt.mqtt_uplink_converter import MqttUplinkConverter
 from thingsboard_gateway.gateway.statistics_service import StatisticsService
 
 
 class BytesMqttUplinkConverter(MqttUplinkConverter):
-    def __init__(self, config):
+    def __init__(self, config, logger):
         self.__config = config.get('converter')
+        self._log = logger
 
     @property
     def config(self):
         return self.__config
+
+    @config.setter
+    def config(self, value):
+        self.__config = value
 
     @StatisticsService.CollectStatistics(start_stat_type='receivedBytesFromDevices',
                                          end_stat_type='convertedBytesFromDevice')
@@ -21,8 +26,8 @@ class BytesMqttUplinkConverter(MqttUplinkConverter):
         datatypes = {"attributes": "attributes",
                      "timeseries": "telemetry"}
         dict_result = {
-            "deviceName": self.parse_data(self.__config['deviceNameExpression'], data),
-            "deviceType": self.parse_data(self.__config['deviceTypeExpression'], data),
+            "deviceName": self.parse_data(self.__config['deviceInfo']['deviceNameExpression'], data),
+            "deviceType": self.parse_data(self.__config['deviceInfo']['deviceProfileExpression'], data),
             "attributes": [],
             "telemetry": []
         }
@@ -37,10 +42,10 @@ class BytesMqttUplinkConverter(MqttUplinkConverter):
                     else:
                         dict_result[datatypes[datatype]].append(value_item)
         except Exception as e:
-            log.error('Error in converter, for config: \n%s\n and message: \n%s\n', dumps(self.__config), str(data))
-            log.exception(e)
+            self._log.error('Error in converter, for config: \n%s\n and message: \n%s\n %s', dumps(self.__config),
+                            str(data), e)
 
-        log.debug('Converted data: %s', dict_result)
+        self._log.debug('Converted data: %s', dict_result)
         return dict_result
 
     @staticmethod

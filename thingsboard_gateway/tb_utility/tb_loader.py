@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -69,7 +69,7 @@ class TBModuleLoader:
                                         TBModuleLoader.LOADED_CONNECTORS[buffered_module_name] = extension_class[1]
                                         return extension_class[1]
                             except ImportError as e:
-                                log.exception(e)
+                                log.error(e.msg)
                                 continue
         except Exception as e:
             log.exception(e)

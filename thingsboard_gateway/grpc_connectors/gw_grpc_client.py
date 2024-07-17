@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -33,8 +33,8 @@ class GrpcClient(Thread):
         self.__host = host
         self.__port = port
         self.on_connect = connect_callback
-        self.setDaemon(True)
-        self.setName("TBGrpcClient thread")
+        self.daemon = True
+        self.name = "TBGrpcClient thread"
         self.stopped = False
         self.connected = False
         self.channel = grpc.insecure_channel("%s:%i" % (self.__host, self.__port))

@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -18,14 +18,13 @@ from threading import Thread
 from time import sleep, time
 from uuid import uuid1
 
-from pkg_resources import DistributionNotFound
-from pkg_resources import get_distribution
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as metadata_version
 from requests import ConnectionError, post
 from simplejson import loads
 
-from thingsboard_gateway.gateway.constants import VERSION
+from thingsboard_gateway import version
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
-
 
 log = getLogger("service")
 
@@ -37,10 +36,10 @@ class TBUpdater(Thread):
         super().__init__()
 
         try:
-            self.__version = {"current_version": get_distribution('thingsboard_gateway').version,
-                              "latest_version": get_distribution('thingsboard_gateway').version}
-        except DistributionNotFound:
-            self.__version = {"current_version": f"v{VERSION}", "latest_version": f"v{VERSION}"}
+            distribution_version = metadata_version('thingsboard_gateway')
+            self.__version = {"current_version": distribution_version, "latest_version": distribution_version}
+        except PackageNotFoundError:
+            self.__version = {"current_version": version.VERSION, "latest_version": version.VERSION}
 
         self.__instance_id = str(uuid1())
         self.__platform = system()

@@ -1,4 +1,4 @@
-#     Copyright 2022. ThingsBoard
+#     Copyright 2024. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -43,8 +43,7 @@ class GrpcMqttConnector(GwGrpcConnector):
         self.__config = self.connection_config['config'][list(self.connection_config['config'].keys())[0]]
         self._connector_key = self.connection_config['grpc_key']
         self._connector_type = 'mqtt'
-        self.setName(
-            self.__config.get("name", 'MQTT Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5))))
+        self.name = self.__config.get("name", 'MQTT Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5)))
 
         self.statistics = {'MessagesReceived': 0, 'MessagesSent': 0}
         self.__subscribes_sent = {}
@@ -130,9 +129,8 @@ class GrpcMqttConnector(GwGrpcConnector):
                                          ciphers=None)
                 except Exception as e:
                     log.error("Cannot setup connection to broker %s using SSL. "
-                              "Please check your configuration.\nError: ",
-                              self.get_name())
-                    log.exception(e)
+                              "Please check your configuration.\nError: %s",
+                              self.get_name(), e)
                 if self.__broker["security"].get("insecure", False):
                     self._client.tls_insecure_set(True)
                 else:
@@ -159,10 +157,13 @@ class GrpcMqttConnector(GwGrpcConnector):
         self._on_message_thread.start()
 
     def load_handlers(self, handler_flavor, mandatory_keys, accepted_handlers_list):
-        if handler_flavor not in self.__config:
+        config = self.__config.get(handler_flavor, [])
+        if self.__config.get("requestsMapping") is not None:
+            config = self.__config["requestsMapping"].get(handler_flavor, [])
+        if handler_flavor not in config:
             log.error("'%s' section missing from configuration", handler_flavor)
         else:
-            for handler in self.__config.get(handler_flavor):
+            for handler in config:
                 discard = False
 
                 for key in mandatory_keys:
@@ -623,8 +624,7 @@ class GrpcMqttConnector(GwGrpcConnector):
             self._client.publish(topic, data, retain=retain).wait_for_publish()
             return
         except (AttributeError, IndexError) as e:
-            log.error('Error when processing attribute response')
-            log.exception(e)
+            log.error('Error when processing attribute response\n %s', e)
             return
 
     def on_attributes_update(self, content):
