@@ -26,7 +26,6 @@ from thingsboard_gateway.tb_utility.tb_logger import init_logger
 # Try import Pymodbus library or install it and import
 installation_required = False
 required_version = '3.0.0'
-force_install = False
 
 try:
     from pymodbus import __version__ as pymodbus_version
@@ -34,17 +33,12 @@ try:
     if version.parse(pymodbus_version) < version.parse(required_version):
         installation_required = True
 
-    if version.parse(
-            pymodbus_version) > version.parse(required_version):
-        installation_required = True
-        force_install = True
-
 except ImportError:
     installation_required = True
 
 if installation_required:
     print("Modbus library not found - installing...")
-    TBUtility.install_package("pymodbus", required_version, force_install=force_install)
+    TBUtility.install_package("pymodbus", required_version)
     TBUtility.install_package('pyserial')
     TBUtility.install_package('pyserial-asyncio')
 
