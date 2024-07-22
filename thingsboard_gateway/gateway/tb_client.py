@@ -233,7 +233,7 @@ class TBClient(threading.Thread):
         # pylint: disable=protected-access
         self.client._on_connect(client, userdata, flags, result_code, *extra_params) # noqa pylint: disable=protected-access
         try:
-            if isinstance(result_code, int) and result_code != 0:
+            if isinstance(result_code, int):
                 if result_code in (159, 151):
                     self.__logger.warning("Connection rate exceeded.")
             else:
