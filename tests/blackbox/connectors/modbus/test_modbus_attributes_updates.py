@@ -17,6 +17,7 @@ GENERAL_TIMEOUT = 6
 
 
 LOG = logging.getLogger("TEST")
+LOG.trace = LOG.debug
 
 
 @unittest.skip('Flaky test')
@@ -45,10 +46,15 @@ class ModbusAttributesUpdatesTest(BaseTest):
             cls.gateway = cls.client.get_tenant_devices(10, 0, text_search='Gateway').data[0]
             assert cls.gateway is not None
 
+
             start_connecting_time = time()
 
-            while not GatewayDeviceUtil.is_gateway_connected(start_connecting_time):
+            gateway_connected = GatewayDeviceUtil.is_gateway_connected(start_connecting_time)
+            while not gateway_connected:
                 LOG.info('Gateway connecting to TB...')
+                gateway_connected = GatewayDeviceUtil.is_gateway_connected(start_connecting_time)
+                if gateway_connected:
+                    break
                 sleep(1)
                 if time() - start_connecting_time > CONNECTION_TIMEOUT:
                     raise TimeoutError('Gateway is not connected to TB')
@@ -80,7 +86,7 @@ class ModbusAttributesUpdatesTest(BaseTest):
         client.connect()
         try:
             # trigger register 28 to restart the modbus server
-            client.write_register(28, 10, 1)
+            client.write_register(28, 10, slave=2)
         except ConnectionException:
             # will call pymodbus.exceptions.ConnectionException because of restarting the server
             pass

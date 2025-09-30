@@ -1,4 +1,4 @@
-#     Copyright 2024. ThingsBoard
+#     Copyright 2025. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -15,9 +15,12 @@
 
 from importlib.util import module_from_spec, spec_from_file_location
 from inspect import getmembers, isclass
-from logging import getLogger
+from logging import getLogger, setLoggerClass
 from os import listdir, path
 
+from thingsboard_gateway.tb_utility.tb_logger import TbLogger
+
+setLoggerClass(TbLogger)
 log = getLogger("service")
 
 EXTENSIONS_FOLDER = '/extensions'.replace('/', path.sep)
@@ -43,6 +46,7 @@ class TBModuleLoader:
 
     @staticmethod
     def import_module(extension_type, module_name):
+        errors = []
         if len(TBModuleLoader.PATHS) == 0:
             TBModuleLoader.find_paths()
         buffered_module_name = extension_type + module_name
@@ -55,7 +59,8 @@ class TBModuleLoader:
                     for file in listdir(current_extension_path):
                         if not file.startswith('__') and (file.endswith('.py') or file.endswith('.pyc')):
                             try:
-                                module_spec = spec_from_file_location(module_name, current_extension_path + path.sep + file)
+                                module_spec = spec_from_file_location(module_name,
+                                                                      current_extension_path + path.sep + file)
                                 log.debug(module_spec)
 
                                 if module_spec is None:
@@ -69,7 +74,10 @@ class TBModuleLoader:
                                         TBModuleLoader.LOADED_CONNECTORS[buffered_module_name] = extension_class[1]
                                         return extension_class[1]
                             except ImportError as e:
-                                log.error(e.msg)
+                                log.info(e.msg)
+                                errors.append(e.msg)
                                 continue
         except Exception as e:
-            log.exception(e)
+            log.error("Error while importing module %s from %s.", module_name, current_extension_path, exc_info=e)
+            errors.append(e)
+        return errors

@@ -1,60 +1,115 @@
-# ThingsBoard IoT Gateway  
+# ThingsBoard IoT Gateway
 
-The Thingsboard **IoT Gateway** is an open-source solution that allows you to integrate devices connected to legacy and third-party systems with Thingsboard.  
+The **ThingsBoard IoT Gateway** is an open-source, Python-based application that enables seamless integration of legacy and third-party devices with the [ThingsBoard IoT platform](https://thingsboard.io/). It serves as a protocol adapter that collects data from external sources and publishes it to ThingsBoard via a unified format.
 
-Thingsboard is an open-source IoT platform for data collection, processing, visualization, and device management. See [**What is Thingsboard?**](https://thingsboard.io/docs/getting-started-guides/what-is-thingsboard/) if you are new platform user.  
+📖 [**What is ThingsBoard IoT Gateway?**](https://thingsboard.io/docs/iot-gateway/what-is-iot-gateway/)
 
-[**What is ThingsBoard IoT Gateway?**](https://thingsboard.io/docs/iot-gateway/what-is-iot-gateway/)  
-[**Getting started with ThingsBoard IoT Gateway**](https://thingsboard.io/docs/iot-gateway/getting-started/)
+> 💡 New to ThingsBoard? [**Learn what ThingsBoard is**](https://thingsboard.io/docs/getting-started-guides/what-is-thingsboard/)
 
-[![**What is ThingsBoard IoT Gateway?**](https://thingsboard.io/images/gateway/python-gateway-animd-ff.svg)](https://thingsboard.io/docs/iot-gateway/what-is-iot-gateway/)
+---
 
-### Gateway features
+## 🚀 Getting Started
 
-Thingsboard IoT Gateway provides following features:  
+Curious how the ThingsBoard IoT Gateway works in action?
 
- - [**OPC-UA** connector](https://thingsboard.io/docs/iot-gateway/config/opc-ua/) to collect data from devices that are connected to OPC-UA servers.
- - [**MQTT** connector](https://thingsboard.io/docs/iot-gateway/config/mqtt/) to collect data that is published to external MQTT brokers. 
- - [**Modbus** connector](https://thingsboard.io/docs/iot-gateway/config/modbus/) to collect data from Modbus servers and slaves.
- - [**BLE** connector](https://thingsboard.io/docs/iot-gateway/config/ble/) to collect data from BLE devices.
- - [**Request** connector](https://thingsboard.io/docs/iot-gateway/config/request/) to collect data from HTTP API.
- - [**REST** connector](https://thingsboard.io/docs/iot-gateway/config/rest/) to collect data using REST API.
- - [**CAN** connector](https://thingsboard.io/docs/iot-gateway/config/can/) to collect data using CAN protocol.
- - [**BACnet** connector](https://thingsboard.io/docs/iot-gateway/config/bacnet/) to collect data from devices using BACnet protocol.
- - [**SNMP** connector](https://thingsboard.io/docs/iot-gateway/config/snmp/) to collect data from SNMP managers objects.
- - [**ODBC** connector](https://thingsboard.io/docs/iot-gateway/config/odbc/) to collect data from ODBC databases.
- - [**FTP** connector](https://thingsboard.io/docs/iot-gateway/config/ftp/) to collect data from files via FTP.
- - [**Socket** connector](https://thingsboard.io/docs/iot-gateway/config/socket/) to collect data from devices using sockets.
- - **XMPP** connector to collect data from XMPP devices.
- - [**Custom** connector](https://thingsboard.io/docs/iot-gateway/custom/) to collect data from custom protocols.
- - **Persistence** of collected data to guarantee data delivery in case of network and hardware failures.
- - **Automatic reconnect** to Thingsboard cluster.
- - Simple yet powerful **mapping** of incoming data and messages **to unified format**.
- - [Remote logging feature](https://thingsboard.io/docs/iot-gateway/guides/how-to-enable-remote-logging/) to monitor the gateway status through the ThingsBoard WEB interface.
- - [RPC gateway methods](https://thingsboard.io/docs/iot-gateway/guides/how-to-use-gateway-rpc-methods/) to control and get information from the gateway through ThingsBoard WEB interface.
- - [Remote shell](https://thingsboard.io/docs/iot-gateway/guides/how-to-enable-remote-shell/) to control operating system with ThingsBoard IoT Gateway from your ThingsBoard platform instance.
- - [Device renaming/removing handling](https://thingsboard.io/docs/iot-gateway/how-device-removing-renaming-works/) to keep the device list in actual state.
- - [Gateway Configurator](https://thingsboard.io/docs/iot-gateway/guides/how-to-configure-gateway-using-configurator/) easy-to-use CLI configurator.
- - **HOT Reload** for developers.
-  
-### Architecture  
+➡️ **Follow our [Getting Started Guide](https://thingsboard.io/docs/iot-gateway/getting-started/)** to:
 
-The IoT Gateway is built on top of **Python**, however is different from similar projects that leverage OSGi technology.
-The idea is distantly similar to microservices architecture.  
-The gateway supports custom connectors to connect to new devices or servers and custom converters for processing data from devices.  
-Especially, when we are talking about language APIs and existing libraries to work with serial ports, GPIOs, I2C, and new modules and sensors that are released every day.  
+- 🚀 Run the gateway in minutes using pre-configured **demo servers**  
+- 🔄 Simulate device data collection and processing workflows  
+- 🧪 Explore telemetry, attributes, and RPCs without real devices  
+- 🖥️ Test integration with ThingsBoard Community or Professional Edition  
 
-The Gateway provides simple integration APIs, and encapsulates common Thingsboard related tasks: device provisioning, local data persistence and delivery, message converters and other.  
-For processing data from devices you also can write custom converter, it will receive information from device and send it to converter to convert to unified format before sending it to the ThingsBoard cluster.  
+> 💡 Ideal for evaluation, proof-of-concept, and learning how the gateway processes and routes data.
 
-## Support
+---
 
- - [Community chat](https://gitter.im/thingsboard/chat)
- - [Q&A forum](https://groups.google.com/forum/#!forum/thingsboard)
- - [Stackoverflow](http://stackoverflow.com/questions/tagged/thingsboard)
- 
-**Don't forget to star the repository to show your ❤️ and support.**
+[![What is ThingsBoard IoT Gateway?](https://thingsboard.io/images/gateway/python-gateway-animd-ff.svg)](https://thingsboard.io/docs/iot-gateway/what-is-iot-gateway/)
 
-## Licenses
+## 🔌 Gateway Features
 
-This project is released under [Apache 2.0 License](./LICENSE).
+ThingsBoard IoT Gateway supports a wide range of industrial and IoT protocols out of the box. Each connector enables collecting data from external systems, transforming it into a unified format, and forwarding it to ThingsBoard.
+
+### 📟 Industrial & SCADA Protocols
+- [**Modbus**](https://thingsboard.io/docs/iot-gateway/config/modbus/) – Integrate with Modbus TCP/RTU devices like PLCs and energy meters.
+- [**OPC-UA**](https://thingsboard.io/docs/iot-gateway/config/opc-ua/) – Connect to industrial automation systems using the OPC-UA protocol.
+- [**CAN**](https://thingsboard.io/docs/iot-gateway/config/can/) – Communicate with devices over the Controller Area Network (e.g., automotive, industrial equipment).
+- [**ODBC**](https://thingsboard.io/docs/iot-gateway/config/odbc/) – Retrieve telemetry from SQL-compliant databases.
+
+### 🌐 IoT & Networking Protocols
+- [**MQTT**](https://thingsboard.io/docs/iot-gateway/config/mqtt/) – Subscribe to external MQTT brokers and ingest messages.
+- [**REST API**](https://thingsboard.io/docs/iot-gateway/config/rest/) – Push data to REST endpoints created by gateway.
+- [**Request Connector**](https://thingsboard.io/docs/iot-gateway/config/request/) – Periodically pull data from HTTP(S) APIs and ingest response payloads.
+- [**FTP**](https://thingsboard.io/docs/iot-gateway/config/ftp/) – Read files from FTP/SFTP servers for batch data ingestion.
+- [**Socket**](https://thingsboard.io/docs/iot-gateway/config/socket/) – Request data via raw TCP/UDP socket connections.  
+- [**SNMP**](https://thingsboard.io/docs/iot-gateway/config/snmp/) – Poll SNMP devices to collect MIB data from routers, switches, sensors.  
+- [**XMPP**](https://thingsboard.io/docs/iot-gateway/config/xmpp/) – Receive telemetry from XMPP-based chat/device networks.  
+
+### 📡 Smart Energy & Charging
+- [**OCPP**](https://thingsboard.io/docs/iot-gateway/config/ocpp/) – Integrate EV charging stations using Open Charge Point Protocol.
+
+### 🏠 Smart Building & Home Automation
+- [**BACnet**](https://thingsboard.io/docs/iot-gateway/config/bacnet/) – Gather building automation data (HVAC, lighting, fire systems).
+- [**KNX**](https://thingsboard.io/docs/iot-gateway/config/knx/) – Interface with KNX-based building automation systems.
+- [**BLE**](https://thingsboard.io/docs/iot-gateway/config/ble/) – Scan and connect to BLE-enabled devices (e.g., beacons, wearables).
+
+### 🧩 Extensibility
+- [**Custom Connectors**](https://thingsboard.io/docs/iot-gateway/custom/) – Build your own protocol handlers using Python to support any proprietary system or emerging protocol.
+
+> ✨ All connectors support flexible configuration, data transformation, and integration with the ThingsBoard platform's device model.
+
+## 🧰 Core Gateway Capabilities
+
+In addition to multi-protocol support, the ThingsBoard IoT Gateway includes robust features for reliability, remote management, and automation:
+
+### 🔒 Reliability & Resilience
+- **Data persistence** – Buffers telemetry locally to prevent data loss during network or system outages.
+- **Automatic reconnection** – Automatically restores connection to the ThingsBoard cluster after temporary failures.
+
+### 🔄 Unified Data Processing
+- **Data mapping engine** – Transforms raw input from devices into ThingsBoard’s unified data format using customizable converters.
+
+### 🛠️ Remote Management & Control
+- [**Remote configuration**](https://thingsboard.io/docs/iot-gateway/guides/how-to-enable-remote-configuration/) – Update and manage gateway configuration directly from the ThingsBoard web UI.
+- [**Remote logging**](https://thingsboard.io/docs/iot-gateway/guides/how-to-enable-remote-logging/) – View and stream logs remotely for troubleshooting and monitoring.
+- [**Gateway service RPC methods**](https://thingsboard.io/docs/iot-gateway/guides/how-to-use-gateway-rpc-methods/) – Interact with the gateway using platform-initiated RPC commands.
+- [**Remote shell access**](https://thingsboard.io/docs/iot-gateway/guides/how-to-enable-remote-shell/) – Run shell commands on the gateway host via the ThingsBoard platform.
+
+### 🔄 Device Lifecycle Handling
+- [**Device rename/removal detection**](https://thingsboard.io/docs/iot-gateway/how-device-removing-renaming-works/) – Automatically synchronizes device renames and deletions to keep the platform device list up to date.  
+
+## 🏗️ Architecture Overview
+
+The IoT Gateway is implemented in **Python**, allowing powerful extension and customization. It follows a modular architecture resembling microservices.
+
+- **Custom connectors** let you interface with new devices or services.
+- **Custom converters** allow transformation of incoming messages to a ThingsBoard-compatible format.
+- The Gateway provides simple integration APIs, and encapsulates common Thingsboard related tasks: device provisioning, local data persistence and delivery, message converters and other.  
+
+> Ideal for edge use cases where flexibility and protocol diversity are key.
+
+---
+
+## 💬 Support & Community
+
+Need help or want to share ideas?
+
+- 💬 [**GitHub Discussions**](https://github.com/thingsboard/thingsboard-gateway/discussions) – Ask questions, propose features, or share use cases.
+- ❓ [**StackOverflow**](http://stackoverflow.com/questions/tagged/thingsboard-gateway) – Use the `thingsboard-gateway` tag.
+
+> 🐞 Found a bug? Please open an [issue](https://github.com/thingsboard/thingsboard-gateway/issues).
+
+---
+
+## ⭐ Contributing
+
+We welcome contributions! Feel free to fork the repo, open PRs, or help triage issues.
+
+---
+
+## ⚖️ License
+
+This project is licensed under the [Apache 2.0 License](./LICENSE).
+
+---
+
+🌟 **Don't forget to star the repository to show your ❤️ and support!**

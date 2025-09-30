@@ -1,4 +1,4 @@
-#     Copyright 2024. ThingsBoard
+#     Copyright 2025. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -12,19 +12,22 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
+from logging import getLogger
 from queue import Empty, Full, Queue
 
-from thingsboard_gateway.storage.event_storage import EventStorage, log
+from thingsboard_gateway.storage.event_storage import EventStorage
 
 
 class MemoryEventStorage(EventStorage):
-    def __init__(self, config):
+    def __init__(self, config, logger, main_stop_event):
+        super().__init__(config, logger, main_stop_event)
+        self.__log = logger
         self.__queue_len = config.get("max_records_count", 10000)
         self.__events_per_time = config.get("read_records_count", 1000)
         self.__events_queue = Queue(self.__queue_len)
         self.__event_pack = []
         self.__stopped = False
-        log.debug("Memory storage created with following configuration: \nMax size: %i\n Read records per time: %i",
+        self.__log.debug("Memory storage created with following configuration: \nMax size: %i\n Read records per time: %i",
                   self.__queue_len, self.__events_per_time)
 
     def put(self, event):
@@ -34,9 +37,9 @@ class MemoryEventStorage(EventStorage):
                 self.__events_queue.put_nowait(event)
                 success = True
             except Full:
-                log.error("Memory storage is full!")
+                self.__log.error("Memory storage is full!")
         else:
-            log.error("Storage is stopped!")
+            self.__log.error("Storage is stopped!")
         return success
 
     def get_event_pack(self):
@@ -56,3 +59,6 @@ class MemoryEventStorage(EventStorage):
 
     def len(self):
         return self.__events_queue.qsize()
+
+    def update_logger(self):
+        self.__log = getLogger("storage")

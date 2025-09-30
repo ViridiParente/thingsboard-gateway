@@ -1,4 +1,4 @@
-#     Copyright 2024. ThingsBoard
+#     Copyright 2025. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -12,28 +12,23 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
-from pymodbus.constants import Endian
 from pymodbus.payload import BinaryPayloadBuilder
 
 from thingsboard_gateway.connectors.modbus.modbus_converter import ModbusConverter
-from thingsboard_gateway.gateway.statistics_service import StatisticsService
+from thingsboard_gateway.connectors.modbus.entities.bytes_downlink_converter_config import \
+    BytesDownlinkConverterConfig
+from thingsboard_gateway.gateway.statistics.decorators import CollectStatistics
 
 
 class BytesModbusDownlinkConverter(ModbusConverter):
 
-    def __init__(self, config, logger):
+    def __init__(self, _, logger):
         self._log = logger
-        self.__config = config
 
-    @StatisticsService.CollectStatistics(start_stat_type='allReceivedBytesFromTB',
-                                         end_stat_type='allBytesSentToDevices')
-    def convert(self, config, data):
-        byte_order_str = config.get("byteOrder", "LITTLE")
-        word_order_str = config.get("wordOrder", "LITTLE")
-        byte_order = Endian.Big if byte_order_str.upper() == "BIG" else Endian.Little
-        word_order = Endian.Big if word_order_str.upper() == "BIG" else Endian.Little
-        repack = config.get("repack", False)
-        builder = BinaryPayloadBuilder(byteorder=byte_order, wordorder=word_order, repack=repack)
+    @CollectStatistics(start_stat_type='allReceivedBytesFromTB',
+                       end_stat_type='allBytesSentToDevices')
+    def convert(self, config: BytesDownlinkConverterConfig, data):
+        builder = BinaryPayloadBuilder(byteorder=config.byte_order, wordorder=config.word_order, repack=config.repack)
         builder_functions = {"string": builder.add_string,
                              "bits": builder.add_bits,
                              "8int": builder.add_8bit_int,
@@ -47,20 +42,15 @@ class BytesModbusDownlinkConverter(ModbusConverter):
                              "16float": builder.add_16bit_float,
                              "32float": builder.add_32bit_float,
                              "64float": builder.add_64bit_float}
-        value = None
-        if data.get("data") and data["data"].get("params") is not None:
-            value = data["data"]["params"]
-        else:
-            value = config.get("value", 0)
 
-        lower_type = config.get("type", config.get("tag", "error")).lower()
+        value = data["data"]["params"]
 
-        if lower_type == "error":
+        if config.lower_type == "error":
             self._log.error('"type" and "tag" - not found in configuration.')
 
-        initial_objects_count = config.get("objectsCount", config.get("registersCount", config.get("registerCount", 1)))
-        variable_size = initial_objects_count * 16 if lower_type not in ["coils", "bits", "coil",
-                                                                         "bit"] else initial_objects_count
+        lower_type = config.lower_type
+        variable_size = config.objects_count * 16 if lower_type not in ["coils", "bits", "coil",
+                                                                        "bit"] else config.objects_count
 
         if lower_type in ["integer", "dword", "dword/integer", "word", "int"]:
             lower_type = str(variable_size) + "int"
@@ -76,7 +66,7 @@ class BytesModbusDownlinkConverter(ModbusConverter):
             builder_functions[lower_type](float(value))
         elif lower_type in ["coil", "bits", "coils", "bit"]:
             assert builder_functions.get("bits") is not None
-            if variable_size / 8 > 1.0:
+            if variable_size > 1:
                 if isinstance(value, str):
                     builder_functions["bits"](bytes(value, encoding='UTF-8'))
                 elif isinstance(value, list):
@@ -84,7 +74,7 @@ class BytesModbusDownlinkConverter(ModbusConverter):
                 else:
                     builder_functions["bits"]([int(x) for x in bin(value)[2:]])
             else:
-                return bytes(int(value))
+                return int(value).to_bytes(1, byteorder='big')
         elif lower_type in ["string"]:
             assert builder_functions.get("string") is not None
             builder_functions[lower_type](value)
@@ -103,7 +93,7 @@ class BytesModbusDownlinkConverter(ModbusConverter):
                                         6: builder.to_registers,
                                         16: builder.to_registers}
 
-        function_code = config["functionCode"]
+        function_code = config.function_code
 
         if function_code in builder_converting_functions:
             builder = builder_converting_functions[function_code]()
@@ -126,5 +116,5 @@ class BytesModbusDownlinkConverter(ModbusConverter):
                         builder = builder[0]
             return builder
         self._log.warning("Unsupported function code, for the device %s in the Modbus Downlink converter",
-                          config["device"])
+                          config.device_name)
         return None

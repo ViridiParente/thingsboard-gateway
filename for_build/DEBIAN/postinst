@@ -1,48 +1,117 @@
 #!/bin/sh
-#      Copyright 2022. ThingsBoard
-#
-#      Licensed under the Apache License, Version 2.0 (the "License");
-#      you may not use this file except in compliance with the License.
-#      You may obtain a copy of the License at
-#
-#          http://www.apache.org/licenses/LICENSE-2.0
-#
-#      Unless required by applicable law or agreed to in writing, software
-#      distributed under the License is distributed on an "AS IS" BASIS,
-#      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#      See the License for the specific language governing permissions and
-#      limitations under the License.
-
 set -e
 
-# Automatically added by dh_python3:
-if which py3compile >/dev/null 2>&1; then
-	py3compile -p python3-thingsboard-gateway 
-fi
-if which pypy3compile >/dev/null 2>&1; then
-	pypy3compile -p python3-thingsboard-gateway  || true
+REQUIRED_MAJOR=3
+REQUIRED_MINOR=11
+
+show_instruction() {
+  echo "To install Python $REQUIRED_MAJOR.$REQUIRED_MINOR:"
+  echo ""
+  echo "sudo add-apt-repository ppa:deadsnakes/ppa -y"
+  echo "sudo apt-get update"
+  echo "sudo apt-get install -y python$REQUIRED_MAJOR.$REQUIRED_MINOR python$REQUIRED_MAJOR.$REQUIRED_MINOR-venv"
+  echo ""
+  echo "CAUTION: Uninstall previously installed package"
+  echo "sudo dpkg --purge python3-thingsboard-gateway"
+}
+
+if [ -f /var/lib/thingsboard_gateway/venv.tar.gz ]; then
+  echo "Postinst: Checking python version..."
+
+  PYTHON_BIN=$(command -v python3.11 || true)
+
+  if [ -z "$PYTHON_BIN" ]; then
+    echo "Error: python3.11 is not installed." >&2
+    exit 0
+  fi
+
+  VERSION=$($PYTHON_BIN -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')")
+  ACTUAL_MAJOR=$($PYTHON_BIN -c "import sys; print(sys.version_info.major)")
+  ACTUAL_MINOR=$($PYTHON_BIN -c "import sys; print(sys.version_info.minor)")
+
+  echo "Detected Python version: $VERSION"
+
+  if [ "$ACTUAL_MAJOR" -ne "$REQUIRED_MAJOR" ] || [ "$ACTUAL_MINOR" -ne "$REQUIRED_MINOR" ]; then
+    echo "Error: Required Python version is $REQUIRED_MAJOR.$REQUIRED_MINOR, but found $VERSION" >&2
+    show_instruction
+    exit 0
+  fi
+
+  echo "Python version is compatible."
 fi
 
-# End automatically added section
-echo "Installing jsonschema"
-sudo rm -rf /usr/lib/python3/dist-packages/jsonschema
-CURRENT_USER=$USER
-sudo pip3 install --upgrade jsonschema==3.1.1
-sudo pip3 install --upgrade pyrsistent --progress-bar off -qqq || echo "OK"
-sudo pip3 install --upgrade importlib --progress-bar off -qqq || echo "OK"
-sudo pip3 install --upgrade importlib-metadata --progress-bar off -qqq || echo "OK"
-sudo cp -a -r /etc/thingsboard-gateway/extensions /var/lib/thingsboard_gateway/
-sudo rm -r /etc/thingsboard-gateway/extensions
-sudo usermod -a -G dialout $CURRENT_USER
-sudo usermod -a -G dialout thingsboard_gateway
-sudo usermod -a -G thingsboard_gateway $CURRENT_USER
-sudo chown thingsboard_gateway:thingsboard_gateway /var/log/thingsboard-gateway/ -R
-sudo chown thingsboard_gateway:thingsboard_gateway /var/lib/thingsboard_gateway/ -R
-sudo chown thingsboard_gateway:thingsboard_gateway /etc/thingsboard-gateway/ -R
-sudo sed -i 's/\.\/logs/\/var\/log\/thingsboard-gateway/g' /etc/thingsboard-gateway/config/logs.json >> /etc/thingsboard-gateway/config/logs.json
-echo "Installation completed"
-echo "Enabling daemon..."
-sudo pidof systemd && sudo systemctl enable thingsboard-gateway || echo "Systemctl not found, cannot enable the daemon!"
-echo "Starting daemon..."
-sudo pidof systemd && sudo systemctl start thingsboard-gateway || echo "Systemctl not found, cannot start the daemon!"
-echo -e "\e[96mThingsboard Gateway \e[92mhas been installed. Have a nice day \e[93m\e[5m:)\e[25m\e[39m"
+echo "Postinst: Ensuring required directories exist..."
+for dir in /var/lib/thingsboard_gateway /etc/thingsboard-gateway /var/log/thingsboard-gateway; do
+    if [ ! -d "$dir" ]; then
+        echo "Postinst: Creating $dir..."
+        mkdir -p "$dir"
+    fi
+done
+
+# Extract configuration files from configs.tar.gz if present
+if [ -f /etc/thingsboard-gateway/configs.tar.gz ]; then
+    if [ ! -d /etc/thingsboard-gateway/config ]; then
+        echo "Postinst: Extracting configuration files from configs.tar.gz..."
+        tar -xzf /etc/thingsboard-gateway/configs.tar.gz -C /etc/thingsboard-gateway
+        rm -f /etc/thingsboard-gateway/configs.tar.gz
+    else
+        echo "Postinst: Directory /etc/thingsboard-gateway/config exists. Creating backup as configs_backup.tar.gz..."
+        tar -czf /etc/thingsboard-gateway/configs_backup.tar.gz -C /etc/thingsboard-gateway config
+    fi
+fi
+
+# Extract extensions archive into /var/lib/thingsboard_gateway/extensions
+if [ -f /var/lib/thingsboard_gateway/extensions.tar.gz ]; then
+    if [ ! -d /var/lib/thingsboard_gateway/extensions ]; then
+        echo "Postinst: Extracting extensions from extensions.tar.gz..."
+        mkdir -p /var/lib/thingsboard_gateway/extensions
+        tar -xzf /var/lib/thingsboard_gateway/extensions.tar.gz -C /var/lib/thingsboard_gateway/extensions
+        rm -f /var/lib/thingsboard_gateway/extensions.tar.gz
+    else
+        echo "Postinst: Directory /var/lib/thingsboard_gateway/extensions exists. Creating backup as extensions_backup.tar.gz..."
+        tar -czf /var/lib/thingsboard_gateway/extensions_backup.tar.gz -C /var/lib/thingsboard_gateway extensions
+        echo "Postinst: Removing existing /var/lib/thingsboard_gateway/extensions directory..."
+    fi
+fi
+
+VENV_PATH="/var/lib/thingsboard_gateway/venv"
+WHEEL_FILE=$(ls /var/lib/thingsboard_gateway/*.whl 2>/dev/null || true)
+
+if [ -f /var/lib/thingsboard_gateway/venv.tar.gz ]; then
+    echo "Postinst: Extracting virtual environment from venv.tar.gz..."
+    tar -xzf /var/lib/thingsboard_gateway/venv.tar.gz -C /var/lib/thingsboard_gateway
+    rm -f /var/lib/thingsboard_gateway/venv.tar.gz
+    "$VENV_PATH/bin/pip" install --upgrade "$WHEEL_FILE"
+else
+    echo "Postinst: No venv.tar.gz found, creating a new virtual environment..."
+    echo "Postinst: Setting up Python virtual environment at $VENV_PATH..."
+    if [ -d "$VENV_PATH" ]; then
+        echo "Postinst: Removing existing virtual environment..."
+        rm -rf "$VENV_PATH"
+    fi
+
+    python3 -m venv "$VENV_PATH"
+    "$VENV_PATH/bin/pip" install --upgrade pip setuptools
+    # Install the locally built wheel from /var/lib/thingsboard_gateway.
+    if [ -z "$WHEEL_FILE" ]; then
+        echo "Postinst Error: No wheel file found in /var/lib/thingsboard_gateway." >&2
+        exit 1
+    fi
+    echo "Postinst: Installing wheel package: $WHEEL_FILE into the virtual environment..."
+    "$VENV_PATH/bin/pip" install --upgrade --force-reinstall "$WHEEL_FILE"
+    rm -f /var/lib/thingsboard_gateway/$(basename "$WHEEL_FILE")
+fi
+
+echo "Postinst: Setting ownership for directories..."
+chown -R thingsboard_gateway:thingsboard_gateway /var/lib/thingsboard_gateway
+chown -R thingsboard_gateway:thingsboard_gateway /etc/thingsboard-gateway
+chown -R thingsboard_gateway:thingsboard_gateway /var/log/thingsboard-gateway
+
+echo "Postinst: Enabling thingsboard-gateway service..."
+systemctl enable thingsboard-gateway.service
+echo "Postinst: Starting thingsboard-gateway service..."
+systemctl start thingsboard-gateway.service
+echo ""
+echo -e "Postinst: \e[92mThingsBoard IoT Gateway has been installed successfully.\e[39m"
+echo -e "Have a nice day! \e[95m\e[5m:)\e[25m\e[39m" || echo "Have a nice day!"
+exit 0
