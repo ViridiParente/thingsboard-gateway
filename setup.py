@@ -63,7 +63,8 @@ setup(
               'thingsboard_gateway.connectors.knx', 'thingsboard_gateway.extensions.knx',
               'thingsboard_gateway.connectors.knx.entities',
               'thingsboard_gateway.tb_utility', 'thingsboard_gateway.extensions',
-              'thingsboard_gateway.extensions.serial'
+              'thingsboard_gateway.extensions.serial',
+              'thingsboard_gateway.connectors.isotp', 'thingsboard_gateway.connectors.j1939'
               ],
     install_requires=[
         'setuptools',
