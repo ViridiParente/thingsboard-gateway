@@ -1,4 +1,4 @@
-#     Copyright 2024. ThingsBoard
+#     Copyright 2026. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -12,13 +12,17 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
-from time import time
 
 from simplejson import dumps, loads
 
 from thingsboard_gateway.connectors.request.request_converter import RequestConverter
+from thingsboard_gateway.gateway.constants import REPORT_STRATEGY_PARAMETER
+from thingsboard_gateway.gateway.entities.converted_data import ConvertedData
+from thingsboard_gateway.gateway.entities.report_strategy_config import ReportStrategyConfig
+from thingsboard_gateway.gateway.entities.telemetry_entry import TelemetryEntry
+from thingsboard_gateway.gateway.statistics.decorators import CollectStatistics
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
-from thingsboard_gateway.gateway.statistics_service import StatisticsService
+from thingsboard_gateway.gateway.statistics.statistics_service import StatisticsService
 
 
 class JsonRequestUplinkConverter(RequestConverter):
@@ -28,13 +32,14 @@ class JsonRequestUplinkConverter(RequestConverter):
         self.__datatypes = {"attributes": "attributes",
                             "telemetry": "telemetry"}
 
-    @StatisticsService.CollectStatistics(start_stat_type='receivedBytesFromDevices',
-                                         end_stat_type='convertedBytesFromDevice')
+    @CollectStatistics(start_stat_type='receivedBytesFromDevices',
+                       end_stat_type='convertedBytesFromDevice')
     def convert(self, config, data):
+        device_name = None
+        device_type = None
+
         if isinstance(data, (bytes, str)):
             data = loads(data)
-
-        dict_result = {"deviceName": None, "deviceType": None, "attributes": [], "telemetry": []}
 
         try:
             if self.__config['converter'].get("deviceNameJsonExpression") is not None:
@@ -42,13 +47,12 @@ class JsonRequestUplinkConverter(RequestConverter):
                                                         data, get_tag=True)
                 device_name_values = TBUtility.get_values(self.__config['converter'].get("deviceNameJsonExpression"),
                                                           data, get_tag=False)
-                dict_result["deviceName"] = self.__config['converter'].get("deviceNameJsonExpression")
+                device_name = self.__config['converter'].get("deviceNameJsonExpression")
                 for (device_name_tag, device_name_value) in zip(device_name_tags, device_name_values):
                     is_valid_key = "${" in self.__config['converter'].get("deviceNameJsonExpression") and "}" in \
                                    self.__config['converter'].get("deviceNameJsonExpression")
-                    dict_result['deviceName'] = dict_result['deviceName'].replace('${' + str(device_name_tag) + '}',
-                                                                                  str(device_name_value)) \
-                        if is_valid_key else device_name_tag
+                    device_name = device_name.replace('${' + str(device_name_tag) + '}', str(device_name_value)) \
+                        if is_valid_key else device_name
             else:
                 self.__log.error("The expression for looking \"deviceName\" not found in config %s",
                                  dumps(self.__config['converter']))
@@ -59,22 +63,28 @@ class JsonRequestUplinkConverter(RequestConverter):
                 device_type_values = TBUtility.get_values(self.__config['converter'].get("deviceTypeJsonExpression"),
                                                           data,
                                                           expression_instead_none=True)
-                dict_result["deviceType"] = self.__config['converter'].get("deviceTypeJsonExpression")
+                device_type = self.__config['converter'].get("deviceTypeJsonExpression")
                 for (device_type_tag, device_type_value) in zip(device_type_tags, device_type_values):
                     is_valid_key = "${" in self.__config['converter'].get("deviceTypeJsonExpression") and "}" in \
                                    self.__config['converter'].get("deviceTypeJsonExpression")
-                    dict_result["deviceType"] = dict_result["deviceType"].replace('${' + str(device_type_tag) + '}',
-                                                                                  str(device_type_value)) \
+                    device_type = device_type.replace('${' + str(device_type_tag) + '}', str(device_type_value)) \
                         if is_valid_key else device_type_tag
             else:
                 self.__log.error("The expression for looking \"deviceType\" not found in config %s",
                                  dumps(self.__config['converter']))
         except Exception as e:
+            StatisticsService.count_connector_message(self.__log.name, 'convertersMsgDropped')
             self.__log.exception(e)
+
+        converted_data = ConvertedData(device_name=device_name, device_type=device_type)
+        device_report_strategy = None
+        try:
+            device_report_strategy = ReportStrategyConfig(self.__config.get(REPORT_STRATEGY_PARAMETER))
+        except ValueError as e:
+            self.__log.trace("Report strategy config is not specified for device %s: %s", device_name, e)
 
         try:
             for datatype in self.__datatypes:
-                dict_result[self.__datatypes[datatype]] = []
                 for datatype_object_config in self.__config["converter"].get(datatype, []):
                     values = TBUtility.get_values(datatype_object_config["value"], data, datatype_object_config["type"],
                                                   expression_instead_none=True)
@@ -90,26 +100,80 @@ class JsonRequestUplinkConverter(RequestConverter):
                     for (key, key_tag) in zip(keys, keys_tags):
                         is_valid_key = "${" in datatype_object_config["key"] and "}" in \
                                        datatype_object_config["key"]
-                        full_key = full_key.replace('${' + str(key_tag) + '}',
-                                                    str(key)) if is_valid_key else key_tag
+                        placeholder = '${' + str(key_tag) + '}'
+                        is_unresolved = (key is None or (
+                                isinstance(key, str) and key.startswith("${") and key.endswith("}")))
+                        replacement = "null" if is_unresolved else str(key)
 
-                    full_value = datatype_object_config["value"]
-                    for (value, value_tag) in zip(values, values_tags):
-                        is_valid_value = "${" in datatype_object_config["value"] and "}" in \
-                                         datatype_object_config["value"]
+                        full_key = full_key.replace(placeholder, replacement if is_valid_key else key_tag)
 
-                        full_value = full_value.replace('${' + str(value_tag) + '}',
-                                                        str(value)) if is_valid_value else str(value)
-
-                    if datatype == 'timeseries' and (
-                            data.get("ts") is not None or data.get("timestamp") is not None):
-                        dict_result[self.__datatypes[datatype]].append(
-                            {"ts": data.get('ts', data.get('timestamp', int(time()))),
-                             'values': {full_key: full_value}})
+                    raw_value_expression = datatype_object_config["value"]
+                    is_pure_placeholder = (isinstance(raw_value_expression, str)
+                                           and raw_value_expression.strip().startswith("${")
+                                           and raw_value_expression.strip().endswith("}")
+                                           and raw_value_expression.strip().count("${") == 1)
+                    is_not_template = not ("${" in raw_value_expression and "}" in raw_value_expression)
+                    if is_pure_placeholder or is_not_template:
+                        full_value = values[0] if isinstance(values, list) and values else None
+                        self.__log.debug("The converted value is %s with datatype %s", full_value,
+                                         datatype_object_config["type"])
                     else:
-                        dict_result[self.__datatypes[datatype]].append({full_key: full_value})
+                        resolved_any = False
+                        full_value = raw_value_expression
+                        for (value, value_tag) in zip(values, values_tags):
+                            placeholder = '${' + str(value_tag) + '}'
+                            is_unresolved = (value is None or (
+                                    isinstance(value, str) and value.startswith("${") and value.endswith("}")))
+                            if is_unresolved:
+                                replacement = "null"
+                            else:
+                                replacement = str(value)
+                                resolved_any = True
+                            full_value = full_value.replace(placeholder, replacement)
 
+                        self.__log.debug("The converted value is %s with datatype %s",
+                                         full_value, datatype_object_config["type"])
+                        if not resolved_any:
+                            self.__log.debug(
+                                "All placeholders resolved to null for key %s on device %s. Skipping datapoint. Expression=%r",
+                                full_key, device_name, raw_value_expression
+                            )
+                            continue
+
+                    datapoint_key = TBUtility.convert_key_to_datapoint_key(full_key, device_report_strategy,
+                                                                           datatype_object_config, self.__log)
+
+                    if isinstance(full_key, str) and full_key.startswith("${") and full_key.endswith("}"):
+                        self.__log.debug("Unresolved key expression %r for device %s. Skipping datapoint.", full_key,
+                                         device_name)
+                        continue
+
+                    if full_value is None:
+                        self.__log.debug("Resolved value is None for key %s on device %s. Skipping datapoint.",
+                                         full_key, device_name)
+                        continue
+
+                    if isinstance(full_value, str) and full_value.startswith("${") and full_value.endswith("}"):
+                        self.__log.debug("Unresolved value expression %r for key %s on device %s. Skipping datapoint.",
+                                         full_value, full_key, device_name)
+                        continue
+
+                    if datatype == 'attributes':
+                        converted_data.add_to_attributes(datapoint_key, full_value)
+                    else:
+                        ts = TBUtility.resolve_different_ts_formats(data=data, config=datatype_object_config, logger=self.__log)
+
+                        telemetry_entry = TelemetryEntry({datapoint_key: full_value}, ts)
+                        converted_data.add_to_telemetry(telemetry_entry)
         except Exception as e:
+            StatisticsService.count_connector_message(self.__log.name, 'convertersMsgDropped')
             self.__log.exception(e)
 
-        return dict_result
+        StatisticsService.count_connector_message(self.__log.name, 'convertersAttrProduced',
+                                                  count=converted_data.attributes_datapoints_count)
+        StatisticsService.count_connector_message(self.__log.name, 'convertersTsProduced',
+                                                  count=converted_data.telemetry_datapoints_count)
+
+        self.__log.debug("Converted data: %s", converted_data)
+
+        return converted_data

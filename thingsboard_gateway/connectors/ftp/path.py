@@ -1,4 +1,4 @@
-#     Copyright 2024. ThingsBoard
+#     Copyright 2026. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -13,7 +13,8 @@
 #     limitations under the License.
 
 import os
-
+import posixpath
+from ftplib import error_perm
 from regex import compile
 
 from thingsboard_gateway.connectors.ftp.file import File
@@ -23,8 +24,8 @@ COMPATIBLE_FILE_EXTENSIONS = ('json', 'txt', 'csv')
 
 class Path:
     def __init__(self, path: str, delimiter: str, telemetry: list, device_name: str, attributes: list,
-                 txt_file_data_view: str, poll_period=60, with_sorting_files=True, device_type='Device', max_size=5,
-                 read_mode='FULL'):
+                 txt_file_data_view: str, logger, poll_period=60, with_sorting_files=True, device_type='Device', max_size=5,
+                 read_mode='FULL', report_strategy=None, custom_converter_type=None, extension=None):
         self._path = path
         self._with_sorting_files = with_sorting_files
         self._poll_period = poll_period
@@ -36,8 +37,13 @@ class Path:
         self._device_name = device_name
         self._device_type = device_type
         self._txt_file_data_view = txt_file_data_view
+        self.__log = logger
         self.__read_mode = File.ReadMode[read_mode]
         self.__max_size = max_size
+        self._report_strategy = report_strategy
+        self._custom_converter_type = custom_converter_type
+        if self._custom_converter_type is not None:
+            self._extension = extension
 
     @staticmethod
     def __is_file(ftp, filename):
@@ -58,15 +64,31 @@ class Path:
 
             folder_and_files = ftp.nlst()
 
-            for ff in folder_and_files:
-                cur_file_name, cur_file_ext = ff.split('.')
-                if cur_file_ext in COMPATIBLE_FILE_EXTENSIONS and self.__is_file(ftp, ff) and ftp.size(ff):
-                    if (file_name == file_ext == '*') \
-                            or pattern.fullmatch(cur_file_name) \
-                            or (cur_file_ext == file_ext and file_name == cur_file_name) \
-                            or (file_name != '*' and cur_file_name == file_name and (
-                            file_ext == cur_file_ext or file_ext == '*')):
-                        kwargs[ftp.voidcmd(f"MDTM {ff}")] = (item + '/' + ff)
+            for folder_or_file in folder_and_files:
+                try:
+                    # rsplit() avoids issues with filenames containing multiple dots
+                    cur_file_name, cur_file_ext = folder_or_file.rsplit('.', 1)
+                    if cur_file_ext in COMPATIBLE_FILE_EXTENSIONS \
+                            and self.__is_file(ftp, folder_or_file):
+                        if (file_name == file_ext == '*') \
+                                or pattern.fullmatch(cur_file_name) \
+                                or (cur_file_ext == file_ext and file_name == cur_file_name) \
+                                or (file_name != '*' and cur_file_name == file_name and (
+                                file_ext == cur_file_ext or file_ext == '*')):
+                            # Use the timestamp as primary sort key: include path to avoid collisions
+                            # when multiple files share the same modification second
+                            try:
+                                resp = ftp.sendcmd(f"MDTM {folder_or_file}")
+                                ts = resp.split()[1]
+                            except (error_perm, IndexError):
+                                # Fallback if MDTM is not supported by the server
+                                ts = "00000000000000"
+
+                            # Collision-free key: (timestamp, full_path)
+                            full_path = posixpath.join(item, folder_or_file)
+                            kwargs[(ts, full_path)] = full_path
+                except ValueError:
+                    continue
 
         if self._with_sorting_files:
             return [File(path_to_file=val, read_mode=self.__read_mode, max_size=self.__max_size) for (_, val) in
@@ -122,7 +144,8 @@ class Path:
             'devicePatternType': self.device_type,
             'timeseries': self.telemetry,
             'attributes': self.attributes,
-            'txt_file_data_view': self.txt_file_data_view
+            'txt_file_data_view': self.txt_file_data_view,
+            'reportStrategy': self._report_strategy
             }
 
     @property
@@ -164,6 +187,22 @@ class Path:
     @property
     def poll_period(self):
         return self._poll_period
+
+    @property
+    def custom_converter_type(self):
+        return self._custom_converter_type
+
+    @custom_converter_type.setter
+    def custom_converter_type(self, value):
+        if value is not None and not isinstance(value, str):
+            self.__log.debug("Provided type for custom converter is not valid using default one - custom")
+            self._custom_converter_type = "custom"
+        else:
+            self._custom_converter_type = value
+
+    @property
+    def extension(self):
+        return self._extension
 
     @last_polled_time.setter
     def last_polled_time(self, value):

@@ -1,4 +1,4 @@
-#     Copyright 2024. ThingsBoard
+#     Copyright 2026. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -20,6 +20,8 @@ from random import choice
 from string import ascii_lowercase
 from threading import Thread
 
+from thingsboard_gateway.gateway.entities.converted_data import ConvertedData
+from thingsboard_gateway.gateway.statistics.statistics_service import StatisticsService
 from thingsboard_gateway.tb_utility.tb_loader import TBModuleLoader
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 from thingsboard_gateway.tb_utility.tb_logger import init_logger
@@ -74,7 +76,12 @@ class CanConnector(Connector, Thread):
         self.__config = config
         self.__id = self.__config.get('id')
         self._log = init_logger(self.__gateway, self.name, self.__config.get('logLevel', 'INFO'),
-                                enable_remote_logging=self.__config.get('enableRemoteLogging', False))
+                                enable_remote_logging=self.__config.get('enableRemoteLogging', False),
+                                is_connector_logger=True)
+        self._converter_log = init_logger(self.__gateway, self.name + '_converter',
+                                          self.__config.get('logLevel', 'INFO'),
+                                          enable_remote_logging=self.__config.get('enableRemoteLogging', False),
+                                          is_converter_logger=True, attr_name=self.name)
         self.__bus_conf = {}
         self.__bus = None
         self.__reconnect_count = 0
@@ -88,7 +95,7 @@ class CanConnector(Connector, Thread):
         self.__converters = {}
         self.__bus_error = None
         self.__connected = False
-        self.__stopped = True
+        self.__stopped = False
         self.daemon = True
         self.__parse_config(config)
 
@@ -143,6 +150,10 @@ class CanConnector(Connector, Thread):
                           self.get_name(), attr_name, content["device"])
 
     def server_side_rpc_handler(self, content):
+        if self.__is_reserved_rpc(content):
+            self.__process_reserved_rpc(content)
+            return
+
         rpc_config = self.__rpc_calls.get(content["device"], {}).get(content["data"]["method"])
         if rpc_config is None:
             if not self.__devices[content["device"]]["enableUnknownRpc"]:
@@ -186,6 +197,62 @@ class CanConnector(Connector, Thread):
         if conversion_config.get("response", self.DEFAULT_RPC_RESPONSE_SEND_FLAG):
             self.__gateway.send_rpc_reply(content["device"], content["data"]["id"], {"success": done})
 
+    def __is_reserved_rpc(self, rpc):
+        rpc_method_name = rpc.get('data', {}).get('method')
+
+        if rpc_method_name == 'set':
+            return True
+
+        return False
+
+    def __get_reserved_rpc_params(self, rpc):
+        params = {}
+
+        rpc_params = rpc.get('data', {}).get('params')
+        if rpc_params is None:
+            return {}
+
+        for param in rpc_params.split(';'):
+            try:
+                (key, value) = param.split('=')
+            except ValueError:
+                continue
+
+            if key and value:
+                params[key] = value
+
+        return params
+
+    def __process_reserved_rpc(self, rpc):
+        params = self.__get_reserved_rpc_params(rpc)
+        if params is None:
+            self._log.warning('RPC params are empty')
+            self.__gateway.send_rpc_reply(device=rpc['device'],
+                                          req_id=rpc['data']['id'],
+                                          content={rpc['data']['method']: 'RPC params are empty.'})
+            return
+
+        data = self.__converters[rpc["device"]]["downlink"].convert(params,
+                                                                    rpc["data"].get("params", {}))
+        if data is None:
+            self._log.error('Converted data is empty.')
+            self.__gateway.send_rpc_reply(device=rpc['device'],
+                                          req_id=rpc['data']['id'],
+                                          content={rpc['data']['method']: 'Converted data is empty.'})
+            return
+
+        done = self.send_data_to_bus(data, params, data_check=True)
+        if not done:
+            self._log.error('Failed to process RPC request')
+            self.__gateway.send_rpc_reply(device=rpc['device'],
+                                          req_id=rpc['data']['id'],
+                                          content={rpc['data']['method']: 'Error during sending message to CANbus'})
+            return
+
+        self.__gateway.send_rpc_reply(device=rpc["device"],
+                                      req_id=rpc["data"]["id"],
+                                      content={'result': {"success": True}})
+
     def run(self):
         need_run = True
         while need_run:
@@ -216,6 +283,10 @@ class CanConnector(Connector, Thread):
                     message = reader.get_message()
                     if message is not None:
                         # log.debug("[%s] New CAN message received %s", self.get_name(), message)
+                        StatisticsService.count_connector_message(self.name,
+                                                                  stat_parameter_name='connectorMsgsReceived')
+                        StatisticsService.count_connector_bytes(self.name, message,
+                                                                stat_parameter_name='connectorBytesReceived')
                         self.__process_message(message)
                     self.__check_if_error_happened()
             except Exception as e:
@@ -249,9 +320,6 @@ class CanConnector(Connector, Thread):
                 else:
                     need_run = False
         self._log.info("[%s] Stopped", self.get_name())
-
-    def is_stopped(self):
-        return self.__stopped
 
     def get_polling_messages(self):
         return self.__polling_messages
@@ -331,35 +399,18 @@ class CanConnector(Connector, Thread):
                   self.get_name(), message.arbitration_id, cmd_id, message)
 
         parsing_conf = self.__nodes[message.arbitration_id][cmd_id]
-        data = self.__converters[parsing_conf["deviceName"]]["uplink"].convert(parsing_conf["configs"], message.data)
-        if data is None or not data.get("attributes", []) and not data.get("telemetry", []):
+        data: ConvertedData = self.__converters[parsing_conf["deviceName"]]["uplink"].convert(parsing_conf, message.data)
+        if data.attributes_datapoints_count == 0 and data.telemetry_datapoints_count == 0:
             self._log.warning("[%s] Failed to process CAN message (id=%d,cmd_id=%s): data conversion failure",
                         self.get_name(), message.arbitration_id, cmd_id)
             return
 
-        self.__check_and_send(parsing_conf, data)
+        self.__check_and_send(data)
 
-    def __check_and_send(self, conf, new_data):
+    def __check_and_send(self, new_data: ConvertedData):
         self.statistics['MessagesReceived'] += 1
-        to_send = {"attributes": [], "telemetry": []}
-        send_on_change = conf["sendOnChange"]
-
-        for tb_key in to_send.keys():
-            for key, new_value in new_data[tb_key].items():
-                if not send_on_change or self.__devices[conf["deviceName"]][tb_key][key] != new_value:
-                    self.__devices[conf["deviceName"]][tb_key][key] = new_value
-                    to_send[tb_key].append({key: new_value})
-
-        if to_send["attributes"] or to_send["telemetry"]:
-            to_send["deviceName"] = conf["deviceName"]
-            to_send["deviceType"] = conf["deviceType"]
-
-            self._log.debug("[%s] Pushing to TB server '%s' device data: %s", self.get_name(), conf["deviceName"], to_send)
-
-            self.__gateway.send_to_storage(self.get_name(), self.get_id(), to_send)
-            self.statistics['MessagesSent'] += 1
-        else:
-            self._log.debug("[%s] '%s' device data has not been changed", self.get_name(), conf["deviceName"])
+        self.__gateway.send_to_storage(self.get_name(), self.get_id(), new_data)
+        self.statistics['MessagesSent'] += 1
 
     def __is_reconnect_enabled(self):
         if self.__reconnect_conf["enabled"]:
@@ -605,11 +656,11 @@ class CanConnector(Connector, Thread):
         else:
             if need_uplink:
                 uplink = config.get("uplink")
-                return BytesCanUplinkConverter(self._log) if uplink is None \
+                return BytesCanUplinkConverter(self._converter_log) if uplink is None \
                     else TBModuleLoader.import_module(self._connector_type, uplink)
             else:
                 downlink = config.get("downlink")
-                return BytesCanDownlinkConverter(self._log) if downlink is None \
+                return BytesCanDownlinkConverter(self._converter_log) if downlink is None \
                     else TBModuleLoader.import_module(self._connector_type, downlink)
 
     def get_config(self):

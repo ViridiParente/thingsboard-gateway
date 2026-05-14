@@ -1,4 +1,4 @@
-#     Copyright 2024. ThingsBoard
+#     Copyright 2026. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -23,9 +23,13 @@ from time import sleep
 
 from simplejson import dumps, load
 
+from thingsboard_gateway.gateway.constants import TELEMETRY_PARAMETER
+from thingsboard_gateway.gateway.entities.converted_data import ConvertedData
+from thingsboard_gateway.gateway.statistics.decorators import CollectAllReceivedBytesStatistics
 from thingsboard_gateway.tb_utility.tb_loader import TBModuleLoader
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 from thingsboard_gateway.tb_utility.tb_logger import init_logger
+from thingsboard_gateway.gateway.statistics.statistics_service import StatisticsService
 
 try:
     import pyodbc
@@ -37,11 +41,9 @@ except ImportError:
 from thingsboard_gateway.connectors.odbc.odbc_uplink_converter import OdbcUplinkConverter
 
 from thingsboard_gateway.connectors.connector import Connector
-from thingsboard_gateway.gateway.statistics_service import StatisticsService
 
 
 class OdbcConnector(Connector, Thread):
-    DEFAULT_SEND_IF_CHANGED = False
     DEFAULT_RECONNECT_STATE = True
     DEFAULT_SAVE_ITERATOR = False
     DEFAULT_RECONNECT_PERIOD = 60
@@ -61,7 +63,12 @@ class OdbcConnector(Connector, Thread):
         self.__config = config
         self.__id = self.__config.get('id')
         self._log = init_logger(self.__gateway, self.name, self.__config.get('logLevel', 'INFO'),
-                                enable_remote_logging=self.__config.get('enableRemoteLogging', False))
+                                enable_remote_logging=self.__config.get('enableRemoteLogging', False),
+                                is_connector_logger=True)
+        self._converter_log = init_logger(self.__gateway, self.name + '_converter',
+                                          self.__config.get('logLevel', 'INFO'),
+                                          enable_remote_logging=self.__config.get('enableRemoteLogging', False),
+                                          is_converter_logger=True, attr_name=self.name)
         self._connector_type = connector_type
         self.__stopped = False
 
@@ -79,7 +86,7 @@ class OdbcConnector(Connector, Thread):
         self.__attribute_columns = []
         self.__timeseries_columns = []
 
-        self.__converter = OdbcUplinkConverter(self._log) if not self.__config.get("converter", "") else \
+        self.__converter = OdbcUplinkConverter(self._converter_log) if not self.__config.get("converter", "") else \
             TBModuleLoader.import_module(self._connector_type, self.__config["converter"])
 
         self.__configure_pyodbc()
@@ -114,13 +121,17 @@ class OdbcConnector(Connector, Thread):
     def on_attributes_update(self, content):
         pass
 
-    @StatisticsService.CollectAllReceivedBytesStatistics(start_stat_type='allReceivedBytesFromTB')
+    @CollectAllReceivedBytesStatistics(start_stat_type='allReceivedBytesFromTB')
     def server_side_rpc_handler(self, content):
         done = False
         try:
             if not self.is_connected():
                 self._log.warning("[%s] Cannot process RPC request: not connected to database", self.get_name())
                 raise Exception("no connection")
+
+            if self.__is_reserved_rpc(content):
+                self.__process_reverved_rpc(content)
+                return
 
             is_rpc_unknown = False
             rpc_config = self.__config["serverSideRpc"]["methods"].get(content["data"]["method"])
@@ -146,21 +157,7 @@ class OdbcConnector(Connector, Thread):
                             self.get_name(), "unknown" if is_rpc_unknown else "", content["data"]["method"],
                             content["data"]["id"], content["device"], sql_params, query)
 
-            if self.__rpc_cursor is None:
-                self.__rpc_cursor = self.__connection.cursor()
-
-            if query:
-                if sql_params:
-                    self.__rpc_cursor.execute(query, sql_params)
-                else:
-                    self.__rpc_cursor.execute(query)
-            else:
-                if sql_params:
-                    self.__rpc_cursor.execute("{{CALL {} ({})}}".format(content["data"]["method"],
-                                                                        ("?," * len(sql_params))[0:-1]),
-                                              sql_params)
-                else:
-                    self.__rpc_cursor.execute("{{CALL {}}}".format(content["data"]["method"]))
+            self.__process_rpc(content["data"]["method"], query, sql_params)
 
             done = True
             self._log.debug("[%s] Processed '%s' RPC request (id=%s) for '%s' device",
@@ -179,6 +176,99 @@ class OdbcConnector(Connector, Thread):
                 self.__gateway.send_rpc_reply(content["device"], content["data"]["id"], response)
             else:
                 self.__gateway.send_rpc_reply(content["device"], content["data"]["id"], {"success": done})
+
+    def __is_reserved_rpc(self, rpc):
+        rpc_method_name = rpc.get('data', {}).get('method')
+
+        if rpc_method_name == 'set' or rpc_method_name == 'get':
+            return True
+
+        return False
+
+    def __process_reverved_rpc(self, rpc):
+        params = self.__get_reserved_rpc_params(rpc)
+        if not params:
+            self.__log.error('RPC params are empty, expected format: set value={value};')
+            self.__gateway.send_rpc_reply(device=rpc['device'],
+                                          req_id=rpc['data']['id'],
+                                          content={
+                                              rpc['data']['method']:
+                                                  'RPC params are empty, expected format: set value={value};'
+                                          })
+            return
+
+        sql_params = params.get('value', [])
+        query = params.get('query', '')
+        procedure_name = params.get('procedure_name', '')
+        with_result = params.get('with_result', False)
+
+        try:
+            self.__process_rpc(procedure_name, query, sql_params)
+        except pyodbc.Warning as w:
+            self._log.warning("[%s] Warning while processing '%s' RPC request (id=%s) for '%s' device: %s",
+                              self.get_name(), rpc["data"]["method"], rpc["data"]["id"], rpc["device"],
+                              str(w))
+        except Exception as e:
+            self._log.error("[%s] Failed to process '%s' RPC request (id=%s) for '%s' device: %s",
+                            self.get_name(), rpc["data"]["method"], rpc["data"]["id"], rpc["device"],
+                            str(e))
+            self.__gateway.send_rpc_reply(device=rpc['device'],
+                                          req_id=rpc['data']['id'],
+                                          content={rpc['data']['method']: 'Error during executing reserved RPC %s' % e})
+            return
+
+        if with_result:
+            response = self.row_to_dict(self.__rpc_cursor.fetchone())
+            self.__gateway.send_rpc_reply(device=rpc["device"],
+                                          req_id=rpc["data"]["id"],
+                                          content={'result': response})
+        else:
+            self.__gateway.send_rpc_reply(device=rpc["device"],
+                                          req_id=rpc["data"]["id"],
+                                          content={'result': {"success": True}})
+
+    def __get_reserved_rpc_params(self, rpc):
+        params = {}
+
+        rpc_params = rpc.get('data', {}).get('params')
+        if rpc_params is None:
+            return {}
+
+        try:
+            for param in rpc_params.split(';'):
+                try:
+                    (key, value) = param.split('=')
+                except ValueError:
+                    continue
+
+                if key and value:
+                    if key == 'with_result':
+                        params[key] = value.lower() == 'true'
+                    elif key == 'value':
+                        params[key] = value.split(',')
+                    else:
+                        params[key] = value
+        except Exception as e:
+            self.__log.error('Error during parsing RPC params: %s', e)
+            return {}
+
+        return params
+
+    def __process_rpc(self, procedure_name, query, sql_params):
+        if self.__rpc_cursor is None:
+            self.__rpc_cursor = self.__connection.cursor()
+
+        if query:
+            if sql_params:
+                self.__rpc_cursor.execute(query, sql_params)
+            else:
+                self.__rpc_cursor.execute(query)
+        else:
+            if sql_params:
+                query_to_execute = "{{CALL {} ({})}}".format(procedure_name, ("?," * len(sql_params))[0:-1])
+                self.__rpc_cursor.execute(query_to_execute, sql_params)
+            else:
+                self.__rpc_cursor.execute("{{CALL {}}}".format(procedure_name))
 
     def run(self):
         while not self.__stopped:
@@ -241,6 +331,10 @@ class OdbcConnector(Connector, Thread):
         row_count = 0
         for row in rows:
             self._log.debug("[%s] Fetch row: %s", self.get_name(), row)
+            StatisticsService.count_connector_message(self.name, stat_parameter_name='connectorMsgsReceived')
+            StatisticsService.count_connector_bytes(self.name, row,
+                                                    stat_parameter_name='connectorBytesReceived')
+
             self.__process_row(row)
             row_count += 1
 
@@ -255,29 +349,23 @@ class OdbcConnector(Connector, Thread):
         try:
             data = self.row_to_dict(row)
 
-            to_send = {"attributes": {} if "attributes" not in self.__config["mapping"] else
-            self.__converter.convert(self.__config["mapping"]["attributes"], data),
-                       "telemetry": {} if "timeseries" not in self.__config["mapping"] else
-                       self.__converter.convert(self.__config["mapping"]["timeseries"], data)}
+            converted_data: ConvertedData = self.__converter.convert(self.__config["mapping"], data)
 
-            if to_send['telemetry'].get('ts'):
-                to_send['ts'] = to_send['telemetry']['ts']
-                del to_send['telemetry']['ts']
+            StatisticsService.count_connector_message(self._log.name, 'convertersAttrProduced',
+                                                      count=converted_data.attributes_datapoints_count)
+            StatisticsService.count_connector_message(self._log.name, 'convertersTsProduced',
+                                                      count=converted_data.telemetry_datapoints_count)
 
-            device_name = eval(self.__config["mapping"]["device"]["name"], globals(), data)
+            converted_data.device_name = eval(self.__config["mapping"]["device"]["name"], globals(), data)
 
             device_type = eval(self.__config["mapping"]["device"]["type"], globals(), data)
             if not device_type:
                 device_type = self.__config["mapping"]["device"].get("type", "default")
+            converted_data.device_type = device_type
 
-            if to_send["telemetry"] or to_send["attributes"]:
-                if device_name not in self.__devices:
-                    self.__devices[device_name] = {"attributes": {}, "telemetry": {}}
-                    self.__gateway.add_device(device_name, {"connector": self},
-                                              device_type=device_type)
-
+            if converted_data.telemetry_datapoints_count + converted_data.attributes_datapoints_count > 0:
                 self.__iterator["value"] = getattr(row, self.__iterator["name"])
-                self.__check_and_send(device_name, device_type, to_send)
+                self.__check_and_send(converted_data)
         except Exception as e:
             self._log.warning("[%s] Failed to process database row: %s", self.get_name(), str(e))
 
@@ -288,43 +376,13 @@ class OdbcConnector(Connector, Thread):
             data[column_description[0]] = getattr(row, column_description[0])
         return data
 
-    def __check_and_send(self, device_name, device_type, new_data):
+    def __check_and_send(self, to_send: ConvertedData):
         self.statistics['MessagesReceived'] += 1
-        to_send = {"attributes": [], "telemetry": []}
-        send_on_change = self.__config["mapping"].get("sendDataOnlyOnChange", self.DEFAULT_SEND_IF_CHANGED)
-        send_on_change_attributes = self.__config["mapping"].get("sendDataOnlyOnChangeAttributes")
-        send_on_change_telemetry = self.__config["mapping"].get("sendDataOnlyOnChangeTelemetry")
 
-        if send_on_change_attributes is None and send_on_change_telemetry is None:
-            for tb_key in to_send.keys():
-                for key, new_value in new_data[tb_key].items():
-                    if not send_on_change or self.__devices[device_name][tb_key].get(key, None) != new_value:
-                        self.__devices[device_name][tb_key][key] = new_value
-                        to_send[tb_key].append({key: new_value})
-        else:
-            for key, new_value in new_data["attributes"].items():
-                if not send_on_change_attributes or self.__devices[device_name]["attributes"].get(key, None) != new_value:
-                    self.__devices[device_name]["attributes"][key] = new_value
-                    to_send["attributes"].append({key: new_value})
-
-            for key, new_value in new_data["telemetry"].items():
-                if not send_on_change_telemetry or self.__devices[device_name]["telemetry"].get(key, None) != new_value:
-                    self.__devices[device_name]["telemetry"][key] = new_value
-                    to_send["telemetry"].append({key: new_value})
-
-        if to_send["attributes"] or to_send["telemetry"]:
-            to_send["deviceName"] = device_name
-            to_send["deviceType"] = device_type
-
-            to_send['telemetry'] = {'ts': new_data.get('ts', int(time()) * 1000), 'values': new_data['telemetry']}
-
-            self._log.debug("[%s] Pushing to TB server '%s' device data: %s", self.get_name(), device_name, to_send)
-
-            to_send['telemetry'] = [to_send['telemetry']]
+        if to_send.attributes_datapoints_count + to_send.telemetry_datapoints_count > 0:
+            self._log.debug("[%s] Converted data for device '%s': %s", self.get_name(), to_send.device_name, to_send)
             self.__gateway.send_to_storage(self.get_name(), self.get_id(), to_send)
             self.statistics['MessagesSent'] += 1
-        else:
-            self._log.debug("[%s] '%s' device data has not been changed", self.get_name(), device_name)
 
     def __init_connection(self):
         try:

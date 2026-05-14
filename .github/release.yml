@@ -1,0 +1,82 @@
+exclude-labels:
+  - 'Ignore for release'
+  - 'bug'
+
+name-template: 'ThingsBoard IoT Gateway v$NEXT_PATCH_VERSION'
+tag-template: '$NEXT_PATCH_VERSION'
+template: |
+  $CHANGES
+
+change-template: '* $TITLE (#$NUMBER) @$AUTHOR'
+
+header: |
+  ## 🛠 Improvements
+
+category-template: '#### $TITLE'
+categories:
+
+  - title: '⚙️ Core:'
+    labels:
+      - 'core'
+
+  - title: '🧩 MQTT connector:'
+    labels:
+      - 'Connector:MQTT'
+
+  - title: '🧩 Modbus connector:'
+    labels:
+      - 'Connector:Modbus'
+
+  - title: '🧩 OPC-UA connector:'
+    labels:
+      - 'Connector:OPC-UA'
+
+  - title: '🧩 BLE connector:'
+    labels:
+      - 'Connector:BLE'
+
+  - title: '🧩 BACnet connector:'
+    labels:
+      - 'Connector:BACnet'
+
+  - title: '🧩 KNX connector:'
+    labels:
+      - 'Connector:KNX'
+
+  - title: '🧩 CAN connector:'
+    labels:
+      - 'Connector:CAN'
+
+  - title: '🧩 FTP connector:'
+    labels:
+      - 'Connector:FTP'
+
+  - title: '🧩 OCPP connector:'
+    labels:
+      - 'Connector:OCPP'
+
+  - title: '🧩 ODBC connector:'
+    labels:
+      - 'Connector:ODBC'
+
+  - title: '🧩 Request connector:'
+    labels:
+      - 'Connector:Request'
+
+  - title: '🧩 REST connector:'
+    labels:
+      - 'Connector:REST'
+
+  - title: '🧩 SNMP connector:'
+    labels:
+      - 'Connector:SNMP'
+
+  - title: '🧩 Socket connector:'
+    labels:
+      - 'Connector:Socket'
+
+  - title: '🧩 XMPP connector:'
+    labels:
+      - 'Connector:XMPP'
+
+  - title: "Other:"

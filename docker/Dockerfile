@@ -1,4 +1,4 @@
-FROM --platform=$TARGETPLATFORM python:3.11-slim AS build
+FROM python:3.11-slim AS build
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
@@ -26,11 +26,12 @@ RUN mkdir -p /default-config/config /default-config/extensions/ &&  \
         "linux/arm64") DEFAULT_HOST="aarch64-unknown-linux-gnu";; \
         "linux/arm/v7") DEFAULT_HOST="armv7-unknown-linux-gnueabihf";; \
         *) \
-            echo "Unsupported platform detected. Trying to use default value...";; \
+            echo "Unsupported platform detected. Falling back to x86_64."; \
+            DEFAULT_HOST="x86_64-unknown-linux-gnu";; \
         esac && \
-    curl https://sh.rustup.rs -sSf | sh -s -- -y --default-host=$DEFAULT_HOST && \
+    curl https://sh.rustup.rs -sSf | sh -s -- -y --default-host=$DEFAULT_HOST --profile minimal && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* &&  \
+    rm -rf /var/lib/apt/lists/* /tmp/* && \
     echo '#!/bin/sh\n\
 # Main start script\n\
 CONF_FOLDER="/thingsboard_gateway/config"\n\
@@ -42,9 +43,16 @@ if [ ! -f "$FIRSTLAUNCH" ]; then\n\
     echo "#Remove this file only if you want to recreate default config files! This will overwrite existing files" > $FIRSTLAUNCH\n\
 fi\n\
 echo "nameserver 8.8.8.8" >> /etc/resolv.conf\n\
-python /thingsboard_gateway/tb_gateway.py' > /start-gateway.sh && chmod +x /start-gateway.sh &&  \
+python /thingsboard_gateway/tb_gateway.py' > /start-gateway.sh && chmod +x /start-gateway.sh && \
     python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    python3 -m pip install --no-cache-dir -r requirements.txt
+    python3 -m pip install --no-cache-dir cryptography && \
+    python3 -m pip install --no-cache-dir -r requirements.txt && \
+    RUN rustup self uninstall -y || { \
+        echo "rustup uninstall failed, removing manually..."; \
+        rm -rf /root/.rustup /root/.cargo; \
+    } && \
+    apt-get remove --purge -y gcc python3-dev build-essential libssl-dev libffi-dev zlib1g-dev pkg-config && \
+    apt-get autoremove -y
 
 VOLUME ["${configs}", "${extensions}", "${logs}"]
 

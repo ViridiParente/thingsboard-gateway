@@ -4,16 +4,18 @@
     "port": 1883,
     "remoteShell": false,
     "remoteConfiguration": true,
+    "latencyDebugMode": false,
     "statistics": {
       "enable": true,
-      "statsSendPeriodInSeconds": 3600
+      "statsSendPeriodInSeconds": 60,
+      "customStatsSendPeriodInSeconds": 3600
     },
     "deviceFiltering": {
       "enable": false,
       "filterFile": "list.json"
     },
-    "maxPayloadSizeBytes": 1024,
-    "minPackSendDelayMS": 200,
+    "maxPayloadSizeBytes": 8196,
+    "minPackSendDelayMS": 50,
     "minPackSizeToSend": 500,
     "checkConnectorsConfigurationInSeconds": 60,
     "handleDeviceRenaming": true,
@@ -22,11 +24,20 @@
       "accessToken": "YOUR_ACCESS_TOKEN"
     },
     "qos": 1,
+    "reportStrategy": {
+      "type": "ON_RECEIVED"
+    },
     "checkingDeviceActivity": {
       "checkDeviceInactivity": false,
-      "inactivityTimeoutSeconds": 200,
-      "inactivityCheckPeriodSeconds": 500
-    }
+      "inactivityTimeoutSeconds": 300,
+      "inactivityCheckPeriodSeconds": 10
+    },
+    "rateLimits": "DEFAULT_TELEMETRY_RATE_LIMIT",
+    "dpRateLimits": "DEFAULT_TELEMETRY_DP_RATE_LIMIT",
+    "messagesRateLimits": "DEFAULT_MESSAGES_RATE_LIMIT",
+    "deviceMessagesRateLimits": "DEFAULT_MESSAGES_RATE_LIMIT",
+    "deviceRateLimits": "DEFAULT_TELEMETRY_RATE_LIMIT",
+    "deviceDpRateLimits": "DEFAULT_TELEMETRY_DP_RATE_LIMIT"
   },
   "storage": {
     "type": "memory",
@@ -36,21 +47,19 @@
     "max_file_count": 10,
     "max_read_records_count": 10,
     "max_records_per_file": 10000,
-    "data_file_path": "./data/data.db",
+    "data_file_path": "./data/",
     "messages_ttl_check_in_hours": 1,
     "messages_ttl_in_days": 7
   },
   "grpc": {
     "enabled": false,
     "serverPort": 9595,
-    "keepaliveTimeMs": 10000,
-    "keepaliveTimeoutMs": 5000,
-    "keepalivePermitWithoutCalls": true,
+    "keepAliveTimeMs": 10001,
+    "keepAliveTimeoutMs": 5000,
+    "keepAlivePermitWithoutCalls": true,
     "maxPingsWithoutData": 0,
     "minTimeBetweenPingsMs": 10000,
-    "minPingIntervalWithoutDataMs": 5000,
-    "keepAliveTimeMs": 10000,
-    "keepAliveTimeoutMs": 5000
+    "minPingIntervalWithoutDataMs": 5000
   },
   "connectors": []
 }

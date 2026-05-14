@@ -1,4 +1,4 @@
-#     Copyright 2024. ThingsBoard
+#     Copyright 2026. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -410,7 +410,7 @@ class GrpcMqttConnector(GwGrpcConnector):
                 worker.stopped = True
                 self.__workers_thread_pool.remove(worker)
 
-    def _on_message(self, client, userdata, message):
+    def _on_message(self, client, userdata, message, *extra_params):
         self._on_message_queue.put((client, userdata, message))
 
     def _process_on_message(self):
@@ -585,7 +585,7 @@ class GrpcMqttConnector(GwGrpcConnector):
                             self.request_device_attributes(found_device_name, found_attribute_names, client_scope=False)
                             self._attribute_requests_queue.put(
                                 (found_attribute_names, handler.get("topicExpression"), handler.get("valueExpression"),
-                                 handler.get('retain', False)))
+                                 handler.get('retain', False), handler.get('qos', 0)))
 
                             break
 
@@ -599,6 +599,7 @@ class GrpcMqttConnector(GwGrpcConnector):
                 log.debug("Received message to topic \"%s\" with unknown interpreter data: \n\n\"%s\"",
                           message.topic,
                           content)
+        return None
 
     def notify_attribute(self, content):
         try:
@@ -606,7 +607,7 @@ class GrpcMqttConnector(GwGrpcConnector):
                 'device': content.deviceName,
                 'values': content.responseMsg.sharedAttributeList
             }
-            attribute_name, topic_expression, value_expression, retain = self._attribute_requests_queue.get()
+            attribute_name, topic_expression, value_expression, retain, qos = self._attribute_requests_queue.get()
 
             device_name = incoming_data.get("device")
             attribute_values = [item.string_v for item in incoming_data.get('values')]
@@ -621,7 +622,7 @@ class GrpcMqttConnector(GwGrpcConnector):
             else:
                 data = dumps(attribute_values)
 
-            self._client.publish(topic, data, retain=retain).wait_for_publish()
+            self._client.publish(topic, data, qos=qos, retain=retain).wait_for_publish()
             return
         except (AttributeError, IndexError) as e:
             log.error('Error when processing attribute response\n %s', e)
@@ -659,7 +660,7 @@ class GrpcMqttConnector(GwGrpcConnector):
                             except KeyError as e:
                                 log.exception("Cannot form topic, key %s - not found", e)
                                 raise e
-                            self._client.publish(topic, data,
+                            self._client.publish(topic, data, qos=attribute_update.get('qos', 0),
                                                  retain=attribute_update.get('retain', False)).wait_for_publish()
                             log.debug("Attribute Update data: %s for device %s to topic: %s", data,
                                       converted_content["device"], topic)
@@ -725,7 +726,7 @@ class GrpcMqttConnector(GwGrpcConnector):
 
         try:
             log.info("Publishing to: %s with data %s", request_topic, data_to_send)
-            self._client.publish(request_topic, data_to_send, rpc_config.get('retain', False))
+            self._client.publish(request_topic, data_to_send, rpc_config.get('qos', 0), rpc_config.get('retain', False))
 
             if not expects_response or not defines_timeout:
                 log.info("One-way RPC: sending ack to ThingsBoard immediately")

@@ -1,3 +1,6 @@
 {
-  "path": "60.5"
+  "Pressure": "1013.25",
+  "SomeText": "SomeText",
+  "Alarm": "true",
+  "MyNodeId": "12.2"
 }

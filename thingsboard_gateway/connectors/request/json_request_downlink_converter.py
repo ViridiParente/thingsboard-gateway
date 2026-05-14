@@ -1,4 +1,4 @@
-#     Copyright 2024. ThingsBoard
+#     Copyright 2026. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -12,11 +12,14 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
+from ast import literal_eval
 from urllib.parse import quote
 
+from simplejson import dumps, JSONDecodeError
+
 from thingsboard_gateway.connectors.request.request_converter import RequestConverter
+from thingsboard_gateway.gateway.statistics.decorators import CollectStatistics
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
-from thingsboard_gateway.gateway.statistics_service import StatisticsService
 
 
 class JsonRequestDownlinkConverter(RequestConverter):
@@ -24,8 +27,8 @@ class JsonRequestDownlinkConverter(RequestConverter):
         self.__log = logger
         self.__config = config
 
-    @StatisticsService.CollectStatistics(start_stat_type='allReceivedBytesFromTB',
-                                         end_stat_type='allBytesSentToDevices')
+    @CollectStatistics(start_stat_type='allReceivedBytesFromTB',
+                       end_stat_type='allBytesSentToDevices')
     def convert(self, config, data):
         try:
             if data["data"].get("id") is None:
@@ -34,11 +37,11 @@ class JsonRequestDownlinkConverter(RequestConverter):
 
                 result = {
                     "url": self.__config["requestUrlExpression"].replace("${attributeKey}", quote(attribute_key))
-                                                                .replace("${attributeValue}", quote(str(attribute_value)))
-                                                                .replace("${deviceName}", quote(data["device"])),
-                    "data": self.__config["requestValueExpression"].replace("${attributeKey}", quote(attribute_key))
-                                                                   .replace("${attributeValue}", quote(str(attribute_value)))
-                                                                   .replace("${deviceName}", quote(data["device"]))
+                    .replace("${attributeValue}", quote(str(attribute_value)))
+                    .replace("${deviceName}", quote(data.get("device", ""))),
+                    "data": self.__config["requestValueExpression"].replace("${attributeKey}", attribute_key)
+                    .replace("${attributeValue}", str(attribute_value))
+                    .replace("${deviceName}", quote(data.get("device", ""))),
                 }
             else:
                 request_id = str(data["data"]["id"])
@@ -46,23 +49,30 @@ class JsonRequestDownlinkConverter(RequestConverter):
 
                 result = {
                     "url": self.__config["requestUrlExpression"].replace("${requestId}", request_id)
-                                                                .replace("${methodName}", method_name)
-                                                                .replace("${deviceName}", quote(data["device"])),
+                    .replace("${methodName}", method_name)
+                    .replace("${deviceName}", quote(data.get("device", ""))),
                     "data": self.__config["requestValueExpression"].replace("${requestId}", request_id)
-                                                                   .replace("${methodName}", method_name)
-                                                                   .replace("${deviceName}", quote(data["device"]))
+                    .replace("${methodName}", method_name)
+                    .replace("${deviceName}", quote(data.get("device", ""))),
                 }
 
-                result['url'] = TBUtility.replace_params_tags(result['url'], data)
+            result['url'] = TBUtility.replace_params_tags(result['url'], data)
 
-                data_tags = TBUtility.get_values(config.get('requestValueExpression'), data['data'], 'params',
-                                                 get_tag=True)
-                data_values = TBUtility.get_values(config.get('requestValueExpression'), data['data'], 'params',
-                                                   expression_instead_none=True)
+            data_tags = TBUtility.get_values(config.get('requestValueExpression'), data['data'], 'params',
+                                             get_tag=True)
+            data_values = TBUtility.get_values(config.get('requestValueExpression'), data['data'], 'params',
+                                               expression_instead_none=True)
 
-                for (tag, value) in zip(data_tags, data_values):
-                    result['data'] = result["data"].replace('${' + tag + '}', str(value))
+            for (tag, value) in zip(data_tags, data_values):
+                result['data'] = result["data"].replace('${' + tag + '}', str(value))
 
-            return result
+            try:
+                result["data"] = dumps(literal_eval(result["data"]))
+                return result
+
+            except (JSONDecodeError, SyntaxError) as e:
+                self.__log.debug(
+                    "The given object can not be converted to python dict using literal eval and dumps - %s", str(e))
+                return result
         except Exception as e:
             self.__log.exception(e)

@@ -1,4 +1,4 @@
-#     Copyright 2024. ThingsBoard
+#     Copyright 2026. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -22,9 +22,11 @@ from time import sleep
 
 from thingsboard_gateway.connectors.connector import Connector
 from thingsboard_gateway.connectors.xmpp.device import Device
+from thingsboard_gateway.gateway.entities.converted_data import ConvertedData
+from thingsboard_gateway.gateway.statistics.decorators import CollectStatistics, CollectAllReceivedBytesStatistics
 from thingsboard_gateway.tb_utility.tb_loader import TBModuleLoader
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
-from thingsboard_gateway.gateway.statistics_service import StatisticsService
+from thingsboard_gateway.gateway.statistics.statistics_service import StatisticsService
 from thingsboard_gateway.tb_utility.tb_logger import init_logger
 
 try:
@@ -58,7 +60,12 @@ class XMPPConnector(Connector, Thread):
         self._devices_config = config.get('devices', [])
         self.name = config.get("name", 'XMPP Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5)))
         self.__log = init_logger(self.__gateway, self.name, self.__config.get('logLevel', 'INFO'),
-                                 enable_remote_logging=self.__config.get('enableRemoteLogging', False))
+                                 enable_remote_logging=self.__config.get('enableRemoteLogging', False),
+                                 is_connector_logger=True)
+        self.__converter_log = init_logger(self.__gateway, self.name + '_converter',
+                                           self.__config.get('logLevel', 'INFO'),
+                                           enable_remote_logging=self.__config.get('enableRemoteLogging', False),
+                                           is_connector_logger=True, attr_name=self.name)
 
         self._devices = {}
         self._reformat_devices_config()
@@ -92,7 +99,7 @@ class XMPPConnector(Connector, Thread):
                     attribute_updates=config.get('attributeUpdates', []),
                     server_side_rpc=config.get('serverSideRpc', [])
                 )
-                self._devices[device_jid].set_converter(converter(config, self.__log))
+                self._devices[device_jid].set_converter(converter(config, self.__converter_log))
             except KeyError as e:
                 self.__log.error('Invalid configuration %s with key error %s', config, e)
                 continue
@@ -131,6 +138,7 @@ class XMPPConnector(Connector, Thread):
 
         self._xmpp.add_event_handler("session_start", self.session_start)
         self._xmpp.add_event_handler("message", self.message)
+        self._xmpp['feature_mechanisms'].unencrypted_plain = self._server_config.get('unencrypted_plain_auth', True)
 
         for plugin in self._server_config.get('plugins', []):
             self._xmpp.register_plugin(plugin)
@@ -172,13 +180,18 @@ class XMPPConnector(Connector, Thread):
                     device_jid = msg.values['from']
                     device = self._devices.get(device_jid)
                     if device:
+                        StatisticsService.count_connector_message(self.name,
+                                                                  stat_parameter_name='connectorMsgsReceived')
+                        StatisticsService.count_connector_bytes(self.name, msg.values['body'],
+                                                                stat_parameter_name='connectorBytesReceived')
+
                         converted_data = device.converter.convert(device, msg.values['body'])
 
                         if converted_data:
                             XMPPConnector.DATA_TO_SEND.put(converted_data)
 
-                            if not self._available_device.get(converted_data['deviceName']):
-                                self._available_device[converted_data['deviceName']] = device_jid
+                            if not self._available_device.get(converted_data.device_name):
+                                self._available_device[converted_data.device_name] = device_jid
                         else:
                             self.__log.error('Converted data is empty')
                     else:
@@ -191,11 +204,12 @@ class XMPPConnector(Connector, Thread):
     def _send_data(self):
         while not self.__stopped:
             if not XMPPConnector.DATA_TO_SEND.empty():
-                data = XMPPConnector.DATA_TO_SEND.get()
-                self.statistics['MessagesReceived'] = self.statistics['MessagesReceived'] + 1
-                self.__gateway.send_to_storage(self.get_name(), self.get_id(), data)
-                self.statistics['MessagesSent'] = self.statistics['MessagesSent'] + 1
-                self.__log.info('Data to ThingsBoard %s', data)
+                data: ConvertedData = XMPPConnector.DATA_TO_SEND.get()
+                if data.attributes_datapoints_count > 0 or data.telemetry_datapoints_count > 0:
+                    self.statistics['MessagesReceived'] = self.statistics['MessagesReceived'] + 1
+                    self.__gateway.send_to_storage(self.get_name(), self.get_id(), data)
+                    self.statistics['MessagesSent'] = self.statistics['MessagesSent'] + 1
+                    self.__log.info('Data to ThingsBoard %s', data)
 
             sleep(.2)
 
@@ -223,12 +237,12 @@ class XMPPConnector(Connector, Thread):
     def get_config(self):
         return self.__config
 
-    @StatisticsService.CollectStatistics(start_stat_type='allBytesSentToDevices')
+    @CollectStatistics(start_stat_type='allBytesSentToDevices')
     def _send_message(self, jid, data):
         self._xmpp.send_message(mto=jid, mfrom=self._server_config['jid'], mbody=data,
                                 mtype='chat')
 
-    @StatisticsService.CollectAllReceivedBytesStatistics(start_stat_type='allReceivedBytesFromTB')
+    @CollectAllReceivedBytesStatistics(start_stat_type='allReceivedBytesFromTB')
     def on_attributes_update(self, content):
         self.__log.debug('Got attribute update: %s', content)
 
@@ -248,11 +262,15 @@ class XMPPConnector(Connector, Thread):
         except KeyError as e:
             self.__log.error('Key not found %s during processing attribute update', e)
 
-    @StatisticsService.CollectAllReceivedBytesStatistics(start_stat_type='allReceivedBytesFromTB')
+    @CollectAllReceivedBytesStatistics(start_stat_type='allReceivedBytesFromTB')
     def server_side_rpc_handler(self, content):
         self.__log.debug('Got RPC: %s', content)
 
         try:
+            if self.__is_reserved_rpc(content):
+                self.__process_reserved_rpc(content)
+                return
+
             device_jid = self._available_device.get(content['device'])
             if not device_jid:
                 self.__log.error('Device not found')
@@ -280,3 +298,57 @@ class XMPPConnector(Connector, Thread):
                         return
         except KeyError as e:
             self.__log.error('Key not found %s during processing rpc', e)
+
+    def __is_reserved_rpc(self, rpc) -> bool:
+        rpc_method_name = rpc.get('data', {}).get('method')
+
+        if rpc_method_name == 'set':
+            return True
+
+        return False
+
+    def __process_reserved_rpc(self, rpc):
+        params = self.__get_reserved_rpc_params(rpc)
+        if not params:
+            self.__log.error('RPC params are empty, expected format: set value={value};')
+            self.__gateway.send_rpc_reply(device=rpc['device'],
+                                          req_id=rpc['data']['id'],
+                                          content={
+                                              rpc['data']['method']:
+                                                  'RPC params are empty, expected format: set value={value};'
+                                          })
+            return
+
+        device_jid = self._available_device.get(rpc['device'])
+        if not device_jid:
+            self.__log.error('Device not found')
+            return
+
+        try:
+            self._send_message(device_jid, dumps(params))
+            self.__gateway.send_rpc_reply(device=rpc['device'],
+                                          req_id=rpc['data']['id'],
+                                          content={'result': {"success": True}})
+        except Exception as e:
+            self.__log.error('Error during sending reserved RPC %s', e)
+            self.__gateway.send_rpc_reply(device=rpc['device'],
+                                          req_id=rpc['data']['id'],
+                                          content={rpc['data']['method']: 'Error during sending reserved RPC %s' % e})
+
+    def __get_reserved_rpc_params(self, rpc):
+        params = {}
+
+        rpc_params = rpc.get('data', {}).get('params')
+        if rpc_params is None:
+            return {}
+
+        for param in rpc_params.split(';'):
+            try:
+                (key, value) = param.split('=')
+            except ValueError:
+                continue
+
+            if key and value:
+                params[key] = value
+
+        return params

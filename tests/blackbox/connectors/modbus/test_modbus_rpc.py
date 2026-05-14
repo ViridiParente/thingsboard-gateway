@@ -16,6 +16,7 @@ DEVICE_CREATION_TIMEOUT = 200
 GENERAL_TIMEOUT = 6
 
 LOG = logging.getLogger("TEST")
+LOG.trace = LOG.debug
 
 
 class ModbusRpcTest(BaseTest):
@@ -45,8 +46,12 @@ class ModbusRpcTest(BaseTest):
 
             start_connecting_time = time()
 
-            while not GatewayDeviceUtil.is_gateway_connected(start_connecting_time):
+            gateway_connected = GatewayDeviceUtil.is_gateway_connected(start_connecting_time)
+            while not gateway_connected:
                 LOG.info('Gateway connecting to TB...')
+                gateway_connected = GatewayDeviceUtil.is_gateway_connected(start_connecting_time)
+                if gateway_connected:
+                    break
                 sleep(1)
                 if time() - start_connecting_time > CONNECTION_TIMEOUT:
                     raise TimeoutError('Gateway is not connected to TB')
@@ -78,7 +83,7 @@ class ModbusRpcTest(BaseTest):
         client.connect()
         try:
             # trigger register 28 to restart the modbus server
-            client.write_register(28, 10, 1)
+            client.write_register(28, 10, slave=2)
         except ConnectionException:
             # will call pymodbus.exceptions.ConnectionException because of restarting the server
             pass
@@ -128,7 +133,8 @@ class ModbusRpcReadingTest(ModbusRpcTest):
                                                                        "params": rpc,
                                                                        "timeout": 5000
                                                                    })
-            self.assertEqual(result, expected_values[rpc_tag], f'Value is not equal for the next rpc: {rpc_tag}')
+            self.assertEqual(result.get("result"), {'value': expected_values[rpc_tag]},
+                             f'Value is not equal for the next rpc: {rpc_tag}')
 
     def test_input_registers_reading_rpc_big(self):
         (config, _) = self.change_connector_configuration(
@@ -145,7 +151,8 @@ class ModbusRpcReadingTest(ModbusRpcTest):
                                                                        "params": rpc,
                                                                        "timeout": 5000
                                                                    })
-            self.assertEqual(result, expected_values[rpc_tag], f'Value is not equal for the next rpc: {rpc_tag}')
+            self.assertEqual(result.get("result"), {'value': expected_values[rpc_tag]},
+                             f'Value is not equal for the next rpc: {rpc_tag}')
 
     def test_holding_registers_reading_rpc_little(self):
         (config, _) = self.change_connector_configuration(
@@ -162,7 +169,8 @@ class ModbusRpcReadingTest(ModbusRpcTest):
                                                                        "params": rpc,
                                                                        "timeout": 5000
                                                                    })
-            self.assertEqual(result, expected_values[rpc_tag], f'Value is not equal for the next rpc: {rpc_tag}')
+            self.assertEqual(result.get("result"), {'value': expected_values[rpc_tag]},
+                             f'Value is not equal for the next rpc: {rpc_tag}')
 
     def test_holding_registers_reading_rpc_big(self):
         (config, _) = self.change_connector_configuration(
@@ -179,7 +187,8 @@ class ModbusRpcReadingTest(ModbusRpcTest):
                                                                        "params": rpc,
                                                                        "timeout": 5000
                                                                    })
-            self.assertEqual(result, expected_values[rpc_tag], f'Value is not equal for the next rpc: {rpc_tag}')
+            self.assertEqual(result.get("result"), {'value': expected_values[rpc_tag]},
+                             f'Value is not equal for the next rpc: {rpc_tag}')
 
     def test_coils_reading_rpc_little(self):
         (config, _) = self.change_connector_configuration(
@@ -196,7 +205,8 @@ class ModbusRpcReadingTest(ModbusRpcTest):
                                                                        "params": rpc,
                                                                        "timeout": 5000
                                                                    })
-            self.assertEqual(result, expected_values[rpc_tag], f'Value is not equal for the next rpc: {rpc_tag}')
+            self.assertEqual(result.get("result"), {'value': expected_values[rpc_tag]},
+                             f'Value is not equal for the next rpc: {rpc_tag}')
 
     def test_coils_reading_rpc_big(self):
         (config, _) = self.change_connector_configuration(
@@ -213,7 +223,8 @@ class ModbusRpcReadingTest(ModbusRpcTest):
                                                                        "params": rpc,
                                                                        "timeout": 5000
                                                                    })
-            self.assertEqual(result, expected_values[rpc_tag], f'Value is not equal for the next rpc: {rpc_tag}')
+            self.assertEqual(result.get("result"), {'value': expected_values[rpc_tag]},
+                             f'Value is not equal for the next rpc: {rpc_tag}')
 
     def test_discrete_inputs_reading_rpc_little(self):
         (config, _) = self.change_connector_configuration(
@@ -230,7 +241,8 @@ class ModbusRpcReadingTest(ModbusRpcTest):
                                                                        "params": rpc,
                                                                        "timeout": 5000
                                                                    })
-            self.assertEqual(result, expected_values[rpc_tag], f'Value is not equal for the next rpc: {rpc_tag}')
+            self.assertEqual(result.get("result"), {'value': expected_values[rpc_tag]},
+                             f'Value is not equal for the next rpc: {rpc_tag}')
 
     def test_discrete_inputs_reading_rpc_big(self):
         (config, _) = self.change_connector_configuration(
@@ -247,7 +259,8 @@ class ModbusRpcReadingTest(ModbusRpcTest):
                                                                        "params": rpc,
                                                                        "timeout": 5000
                                                                    })
-            self.assertEqual(result, expected_values[rpc_tag], f'Value is not equal for the next rpc: {rpc_tag}')
+            self.assertEqual(result.get("result"), {'value': expected_values[rpc_tag]},
+                             f'Value is not equal for the next rpc: {rpc_tag}')
 
 
 class ModbusRpcWritingTest(ModbusRpcTest):

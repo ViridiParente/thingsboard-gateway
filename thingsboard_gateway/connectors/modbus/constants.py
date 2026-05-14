@@ -1,4 +1,4 @@
-#      Copyright 2024. ThingsBoard
+#      Copyright 2026. ThingsBoard
 #
 #      Licensed under the Apache License, Version 2.0 (the "License");
 #      you may not use this file except in compliance with the License.
@@ -12,7 +12,36 @@
 #      See the License for the specific language governing permissions and
 #      limitations under the License.
 
-from thingsboard_gateway.gateway.constants import *
+from thingsboard_gateway.gateway.constants import *  # noqa
+
+
+class PymodbusDefaults:
+    TcpPort = 502
+    TlsPort = 802
+    UdpPort = 502
+    Backoff = 0.3
+    CloseCommOnError = False
+    HandleLocalEcho = False
+    Retries = 3
+    RetryOnEmpty = False
+    RetryOnInvalid = False
+    Timeout = 3
+    Reconnects = 0
+    TransactionId = 0
+    Strict = True
+    ProtocolId = 0
+    Slave = 0x00
+    Baudrate = 19200
+    Parity = "N"
+    Bytesize = 8
+    Stopbits = 1
+    ZeroMode = False
+    IgnoreMissingSlaves = False
+    ReadSize = 1024
+    BroadcastEnable = False
+    ReconnectDelay = 1000 * 60 * 5
+    Count = 1
+
 
 # Connector constants
 
@@ -33,13 +62,16 @@ LAST_CONNECTION_ATTEMPT_TIME_PARAMETER = "last_connection_attempt_time"
 # Configuration parameters
 
 RPC_SECTION = "rpc"
+IDENTITY_SECTION = "identity"
+SECURITY_SECTION = "security"
 
 BYTE_ORDER_PARAMETER = "byteOrder"
 WORD_ORDER_PARAMETER = "wordOrder"
-SEND_DATA_ONLY_ON_CHANGE_PARAMETER = "sendDataOnlyOnChange"
 CONNECT_ATTEMPT_COUNT_PARAMETER = "connectAttemptCount"
 CONNECT_ATTEMPT_TIME_MS_PARAMETER = "connectAttemptTimeMs"
 WAIT_AFTER_FAILED_ATTEMPTS_MS_PARAMETER = "waitAfterFailedAttemptsMs"
+
+DELAY_BETWEEN_REQUESTS_MS_PARAMETER = "delayBetweenRequestsMs"
 
 FUNCTION_CODE_PARAMETER = "functionCode"
 
@@ -56,16 +88,51 @@ METHOD_PARAMETER = "method"
 STOPBITS_PARAMETER = "stopbits"
 BYTESIZE_PARAMETER = "bytesize"
 PARITY_PARAMETER = "parity"
-STRICT_PARAMETER = "strict"
+RS485_PARAMETER = "rs485"
+RTSCTS_PARAMETER = "rtscts"
+DSRDTR_PARAMETER = "dsrdtr"
+XONXOFF_PARAMETER = "xonxoff"
 TYPE_PARAMETER = "type"
+REPACK_PARAMETER = "repack"
+SERIAL_CONNECTION_TYPE_PARAMETER = "serial"
 
 RETRIES_PARAMETER = "retries"
-RETRY_ON_EMPTY_PARAMETER = "retryOnEmpty"
-RETRY_ON_INVALID_PARAMETER = "retryOnInvalid"
 
 PAYLOAD_PARAMETER = "payload"
 TAG_PARAMETER = "tag"
 
+COILS_INITIALIZER = "coils_initializer"
+HOLDING_REGISTERS = "holding_registers"
+INPUT_REGISTERS = "input_registers"
+DISCRETE_INPUTS = "discrete_inputs"
+AVAILABLE_DATA_TYPES_REGEX = "string|bytes|bits|16int|16uint|16float|32int|32uint|32float|64int|64uint|64float"
+GET_PATTERN_REGEX = rf'^type=(?:{AVAILABLE_DATA_TYPES_REGEX});functionCode=[1-4];objectsCount=\d+;address=\d+;'
+SET_PATTERN_REGEX = rf'^type=(?:{AVAILABLE_DATA_TYPES_REGEX});functionCode=(?:5|6|15|16);'rf'objectsCount=\d+;address=\d+;value=.+;$'
+GET_RPC_EXPECTED_SCHEMA = "get type=<type>;functionCode=<functionCode>;objectsCount=<objectsCount>;address=<address>;"
+SET_RPC_EXPECTED_SCHEMA = "set type=<type>;functionCode=<functionCode>;objectsCount=<objectsCount>;address=<address>;value=<value>;"
+
+FUNCTION_TYPE = {
+    COILS_INITIALIZER: 'co',
+    HOLDING_REGISTERS: 'hr',
+    INPUT_REGISTERS: 'ir',
+    DISCRETE_INPUTS: 'di'
+}
+
+FUNCTION_CODE_SLAVE_INITIALIZATION = {
+    HOLDING_REGISTERS: (6, 16),
+    COILS_INITIALIZER: (5, 15),
+    INPUT_REGISTERS: (6, 16),
+    DISCRETE_INPUTS: (5, 15)
+}
+
+FUNCTION_CODE_READ = {
+    HOLDING_REGISTERS: 3,
+    COILS_INITIALIZER: 1,
+    INPUT_REGISTERS: 4,
+    DISCRETE_INPUTS: 2
+}
+
 # Default values
 
 TIMEOUT = 30
+REQUIRED_KEYS_FOR_WIDE_RANGE_TAG_NAME = [ADDRESS_PARAMETER]

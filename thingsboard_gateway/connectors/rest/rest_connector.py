@@ -1,4 +1,4 @@
-#     Copyright 2024. ThingsBoard
+#     Copyright 2026. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
 #     you may not use this file except in compliance with the License.
@@ -23,11 +23,13 @@ from time import time, sleep
 import ssl
 import os
 
-from simplejson import JSONDecodeError, dumps
-import requests
+from simplejson import dumps
 from requests.auth import HTTPBasicAuth as HTTPBasicAuthRequest
-from requests.exceptions import RequestException
+from requests.exceptions import RequestException, JSONDecodeError
 
+from thingsboard_gateway.connectors.rest.backward_compatibility_adapter import BackwardCompatibilityAdapter
+from thingsboard_gateway.gateway.entities.converted_data import ConvertedData
+from thingsboard_gateway.gateway.statistics.statistics_service import StatisticsService
 from thingsboard_gateway.tb_utility.tb_loader import TBModuleLoader
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 from thingsboard_gateway.connectors.connector import Connector
@@ -41,13 +43,11 @@ except ImportError:
     from requests import Timeout, request as regular_request
 
 try:
-    from aiohttp import web, BasicAuth
+    from aiohttp import web, BasicAuth, hdrs
 except ImportError:
     print('AIOHTTP library not found - installing...')
     TBUtility.install_package('aiohttp')
-    from aiohttp import web, BasicAuth
-
-requests.packages.urllib3.util.ssl_.DEFAULT_CIPHERS += ':ADH-AES128-SHA256'
+    from aiohttp import web, BasicAuth, hdrs
 
 
 class RESTConnector(Connector, Thread):
@@ -61,15 +61,27 @@ class RESTConnector(Connector, Thread):
             'STATISTICS_MESSAGE_RECEIVED': self.statistic_message_received,
             'STATISTICS_MESSAGE_SEND': self.statistic_message_send
         }
-        self.__config = config
+        self.__gateway = gateway
+        self.name = config.get("name", 'REST Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5)))
+        self.__enable_remote_logging = config.get('enableRemoteLogging', False)
+        self.__log = init_logger(self.__gateway, self.name, config.get('logLevel', 'INFO'),
+                                 enable_remote_logging=self.__enable_remote_logging, is_connector_logger=True)
+        self.__converter_log = init_logger(self.__gateway, self.name + '_converter',
+                                           config.get('logLevel', 'INFO'),
+                                           enable_remote_logging=self.__enable_remote_logging,
+                                           is_converter_logger=True, attr_name=self.name)
+        if BackwardCompatibilityAdapter.is_old_config(config):
+            self.__backward_compatibility_adapter = BackwardCompatibilityAdapter(config, self.__log)
+            self.__config = self.__backward_compatibility_adapter.convert()
+        else:
+            self.__config = config
+
         self.__id = self.__config.get('id')
+        self.__server_config = self.__config['server']
+        self.__requests_config = self.__config.get('requestsMapping', [])
         self._connector_type = connector_type
         self.statistics = {'MessagesReceived': 0,
                            'MessagesSent': 0}
-        self.name = config.get("name", 'REST Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5)))
-        self.__gateway = gateway
-        self.__log = init_logger(self.__gateway, self.name, self.__config.get('logLevel', 'INFO'),
-                                 enable_remote_logging=self.__config.get('enableRemoteLogging', False))
         self._default_downlink_converter = TBModuleLoader.import_module(self._connector_type,
                                                                         self._default_converters['downlink'])
         self._default_uplink_converter = TBModuleLoader.import_module(self._connector_type,
@@ -95,19 +107,25 @@ class RESTConnector(Connector, Thread):
             endpoints.update({mapping['endpoint']: {"config": mapping, "converter": converter}})
 
         # configuring Attribute Request endpoints
-        if len(self.__config.get('attributeRequests', [])):
+        if len(self.__requests_config.get('attributeRequests', [])):
+            while self.__gateway.tb_client is None and not hasattr(self.__gateway.tb_client, 'client'):
+                self.__log.info('Waiting for ThingsBoard client to be initialized...')
+                sleep(1)
+
             self.__attribute_type = {
                 'client': self.__gateway.tb_client.client.gw_request_client_attributes,
                 'shared': self.__gateway.tb_client.client.gw_request_shared_attributes
             }
 
-            for attr in self.__config['attributeRequests']:
+            for attr in self.__requests_config['attributeRequests']:
                 config = {
                     'type': 'attributeRequest',
                     'function': self.__attribute_type[attr['type']],
                     'config': attr,
                 }
                 endpoints.update({attr['endpoint']: config})
+
+        self.__log.info("Added endpoints: %s", list(endpoints.keys()))
 
         return endpoints
 
@@ -117,7 +135,7 @@ class RESTConnector(Connector, Thread):
             "anonymous": AnonymousDataHandler,
         }
         handlers = []
-        mappings = self.__config.get("mapping", []) + self.__config.get('attributeRequests', [])
+        mappings = self.__config.get("mapping", []) + self.__requests_config.get('attributeRequests', [])
         for mapping in mappings:
             try:
                 security_type = "anonymous" if mapping.get("security") is None else mapping["security"]["type"].lower()
@@ -125,10 +143,13 @@ class RESTConnector(Connector, Thread):
                     Users.add_user(mapping['endpoint'],
                                    mapping['security']['username'],
                                    mapping['security']['password'])
+                if 'GET' in mapping['HTTPMethods'] and 'HEAD' in mapping['HTTPMethods']:
+                    self.__log.warning("GET and HEAD methods are not allowed together. HEAD method will be ignored.")
+                    mapping['HTTPMethods'].remove('HEAD')
                 for http_method in mapping['HTTPMethods']:
                     handler = data_handlers[security_type](self.collect_statistic_and_send, self.get_name(),
                                                            self.get_id(), self.endpoints[mapping["endpoint"]],
-                                                           self.__log, provider=self.__event_provider)
+                                                           self.__converter_log, self.__log, provider=self.__event_provider)
                     handlers.append(web.route(http_method, mapping['endpoint'], handler))
             except Exception as e:
                 self.__log.error("Error on creating handlers - %s", str(e))
@@ -146,19 +167,19 @@ class RESTConnector(Connector, Thread):
         ssl_context = None
         cert = None
         key = None
-        if self.__config.get('SSL', False):
-            if not self.__config.get('security'):
+        if self.__server_config.get('SSL', False):
+            if not self.__server_config.get('security'):
                 if not os.path.exists('domain_srv.crt'):
                     from thingsboard_gateway.connectors.rest.ssl_generator import SSLGenerator
-                    n = SSLGenerator(self.__config['host'])
+                    n = SSLGenerator(self.__server_config['host'])
                     n.generate_certificate()
 
                 cert = 'domain_srv.crt'
                 key = 'domain_srv.key'
             else:
                 try:
-                    cert = self.__config['security']['cert']
-                    key = self.__config['security']['key']
+                    cert = self.__server_config['security']['cert']
+                    key = self.__server_config['security']['key']
                 except KeyError as e:
                     self.__log.error('Provide certificate and key path!\n %s', e)
 
@@ -168,11 +189,17 @@ class RESTConnector(Connector, Thread):
         self.load_handlers()
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
-        site = web.TCPSite(self._runner, host=self.__config['host'], port=int(self.__config.get('port', 5000)),
-                           ssl_context=ssl_context, reuse_port=True, reuse_address=True)
+        if os.name == 'nt':
+            self.__log.info('REST connector started at %s',
+                            self.__server_config['host'] + ':' + str(self.__server_config.get('port', 5000)))
+            site = web.TCPSite(self._runner, host=self.__server_config['host'], port=int(self.__server_config.get('port', 5000)),
+                               ssl_context=ssl_context)
+        else:
+            site = web.TCPSite(self._runner, host=self.__server_config['host'], port=int(self.__server_config.get('port', 5000)),
+                               ssl_context=ssl_context, reuse_port=True, reuse_address=True)
         await site.start()
         self.__log.info('REST connector started at %s',
-                        self.__config['host'] + ':' + str(self.__config.get('port', 5000)))
+                        self.__server_config['host'] + ':' + str(self.__server_config.get('port', 5000)))
 
     def run(self):
         self._connected = True
@@ -232,7 +259,7 @@ class RESTConnector(Connector, Thread):
                                                **converted_data},
                                     "request": regular_request}
                     attribute_update_request_thread = Thread(target=self.__send_request,
-                                                             args=(request_dict, response_queue, self.__log),
+                                                             args=(request_dict, response_queue),
                                                              daemon=True,
                                                              name="Attribute request to %s" % (
                                                                  converted_data["url"]))
@@ -280,36 +307,40 @@ class RESTConnector(Connector, Thread):
                     if key and value:
                         params[key] = value
 
+                params['valueExpression'] = params.pop('value', None)
+
                 uplink_converter = self._default_uplink_converter
-                downlink_converter = self._default_downlink_converter
-                converted_data = downlink_converter.convert(params, content)
+                downlink_converter = self._default_downlink_converter(params, self.__log)
+                converted_data = downlink_converter.convert(config=params, data=content)
 
                 request_dict = {'config': {**params, **converted_data}, 'request': regular_request,
                                 'converter': uplink_converter}
-                response = self.__send_request(request_dict, Queue(1), self.__log, with_queue=False)
+                response = self.__send_request(request_dict, Queue(1), with_queue=False)
 
                 self.__log.debug('Response from RPC request: %s', response)
                 self.__gateway.send_rpc_reply(device=device,
                                               req_id=content["data"].get('id'),
-                                              content=response[2] if response and len(response) >= 3 else response)
+                                              content={'result': response[2]} if response and len(response) >= 3 else {'result': response[0] if response else response })
             else:
                 for rpc_request in self.__rpc_requests:
                     if fullmatch(rpc_request["deviceNameFilter"], content["device"]) and \
                             fullmatch(rpc_request["methodFilter"], rpc_method):
-                        converted_data = rpc_request["downlink_converter"].convert(rpc_request, content)
+                        converted_data = rpc_request["downlink_converter"].convert(config=rpc_request, data=content)
 
                         request_dict = {"config": {**rpc_request,
                                                    **converted_data},
                                         "request": regular_request}
                         request_dict["converter"] = request_dict["config"].get("uplink_converter")
 
-                        response = self.__send_request(request_dict, Queue(1), self.__log, with_queue=False)
+                        response = self.__send_request(request_dict, Queue(1), with_queue=False)
 
                         self.__log.debug('Response from RPC request: %s', response)
                         if (content['data'].get('id') is not None) and (response is not None):
                             self.__gateway.send_rpc_reply(device=content["device"],
                                                           req_id=content["data"]["id"],
-                                                          content=response[2] if response and len(response) >= 3 else response)
+                                                          content={'result': response[2]} if response and len(
+                                                              response) >= 3 else {
+                                                              'result': response[0] if response else response})
         except Exception as e:
             self.__log.exception(e)
 
@@ -336,7 +367,7 @@ class RESTConnector(Connector, Thread):
             "serverSideRpc": self.__rpc_requests,
         }
         for request_section in requests_from_tb:
-            for request_config_object in self.__config.get(request_section, []):
+            for request_config_object in self.__requests_config.get(request_section, []):
 
                 uplink_imported_class = TBModuleLoader.import_module(self._connector_type, request_config_object.get("extension", self._default_converters["uplink"]))
                 uplink_converter = uplink_imported_class(request_config_object, self.__log)
@@ -353,94 +384,184 @@ class RESTConnector(Connector, Thread):
         self.__rpc_requests = requests_from_tb["serverSideRpc"]
         self.__attribute_updates = requests_from_tb["attributeUpdates"]
 
-    def __send_request(self, request_dict, converter_queue, logger, with_queue=True):
+    def __form_request_from_content_type(self, request_dict):
         url = ""
         try:
             request_dict["next_time"] = time() + request_dict["config"].get("scanPeriod", 10)
-
-            if str(request_dict["config"]["url"]).lower().startswith("http"):
-                url = request_dict["config"]["url"]
+            raw_url = str(request_dict["config"]["url"])
+            if raw_url.lower().startswith("http"):
+                url = raw_url
             else:
-                url = "http://" + request_dict["config"]["url"]
+                url = "http://" + raw_url
+            self.__log.debug("Forming request to URL: %s", url)
 
-            logger.debug(url)
             security = None
+            security_configuration = request_dict["config"].get("security", {})
+            security_type = security_configuration.get("type", "anonymous").lower()
+            if security_type == "basic":
+                security = HTTPBasicAuthRequest(
+                    security_configuration["username"],
+                    security_configuration["password"],
+                )
 
-            if request_dict["config"]["security"]["type"].lower() == "basic":
-                security = HTTPBasicAuthRequest(request_dict["config"]["security"]["username"],
-                                                request_dict["config"]["security"]["password"])
+            cert = None
+            if security_type == "cert":
+                if security_configuration.get("key", ""):
+                    cert = (security_configuration["cert"], security_configuration["key"])
+                else:
+                    cert = security_configuration["cert"]
 
-            request_timeout = request_dict["config"].get("timeout")
+            request_timeout = request_dict["config"].get("timeout", 10)
+            configuration = request_dict["config"]
 
-            data = {"data": request_dict["config"]["data"]}
-            params = {
-                "method": request_dict["config"].get("HTTPMethod", "GET"),
+            base_params = {
+                "method": configuration.get("HTTPMethod", "GET"),
                 "url": url,
                 "timeout": request_timeout,
-                "allow_redirects": request_dict["config"].get("allowRedirects", False),
-                "verify": request_dict["config"].get("SSLVerify"),
+                "allow_redirects": configuration.get("allowRedirects", False),
+                "verify": configuration.get("SSLVerify", True),
                 "auth": security,
-                **data,
+                "cert": cert,
             }
-            logger.debug(url)
 
-            if request_dict["config"].get("httpHeaders") is not None:
-                params["headers"] = request_dict["config"]["httpHeaders"]
+            headers = configuration.get("httpHeaders", {})
+            if not isinstance(headers, dict):
+                headers = json.loads(headers)
 
-            logger.debug("Request to %s will be sent", url)
-            response = None
-            data_to_storage = []
-            try:
-                response = request_dict["request"](**params)
+            content_type = headers.get("Content-Type", None)
+            data = configuration.get("data", None)
 
-            except Timeout:
-                logger.error("Timeout error on request %s.", url)
-                data_to_storage.append({"error": "Timeout", "code": 408})
-            except RequestException as e:
-                logger.error("Cannot connect to %s. Request exception.", url)
-                data_to_storage.append({"error": str(e)})
-                logger.debug(e)
-            except ConnectionError:
-                logger.error("Cannot connect to %s. Connection error.", url)
-                data_to_storage.append({"error": f"Cannot connect to target url: {url}"})
+            if content_type == "multipart/form-data":
+                files = self.__form_multipart_files(data)
+                base_params["files"] = files
 
-            if response and response.ok:
+                headers_copy = headers.copy()
+                headers_copy.pop("Content-Type", None)
+
+                if headers_copy:
+                    base_params["headers"] = headers_copy
+                self.__log.trace("Formed multipart/form-data request with files: %s and headers: %s", files, headers_copy)
+                return base_params
+
+            if content_type == "application/json":
+                if headers:
+                    base_params["headers"] = headers
                 try:
-                    data_to_storage.append(response.json())
-                except UnicodeDecodeError:
-                    data_to_storage.append(response.content)
-                except JSONDecodeError:
-                    data_to_storage.append(response.content)
+                    data = json.loads(data)
 
-                if len(data_to_storage) == 3 and with_queue and not converter_queue.full():
-                    converter_queue.put(data_to_storage)
-                    self.statistics["MessagesReceived"] = self.statistics["MessagesReceived"] + 1
-            else:
-                if response is not None:
-                    logger.error("Request to URL: %s finished with code: %i. Cat information: http://http.cat/%i",
-                                 url,
-                                 response.status_code,
-                                 response.status_code)
-                    logger.debug("Response: %r", response.text)
-                    data_to_storage.append({"error": response.reason, "code": response.status_code})
+                except json.JSONDecodeError as e:
+                    self.__log.error("Failed to decode JSON data. %s", e)
 
-                if with_queue:
-                    converter_queue.put(data_to_storage)
+                except Exception as e:
+                    self.__log.error("Unexpected error occurred %s", e)
+                    self.__log.debug("Unexpected error occurred: %s", exc_info=e)
 
-                self.statistics["MessagesReceived"] = self.statistics["MessagesReceived"] + 1
+                finally:
+                    base_params["json"] = data
+                self.__log.trace("Formed application/json request with data: %s and headers: %s", data, headers)
 
-            if not with_queue:
-                return data_to_storage
+                return base_params
+
+            if headers:
+                base_params["headers"] = headers
+
+            if data is not None:
+                if isinstance(data, (dict, list)):
+                    base_params["data"] = json.dumps(data)
+                    base_params.setdefault("headers", {})
+                    base_params["headers"]["Content-Type"] = "application/json"
+                else:
+                    base_params["data"] = data
+                return base_params
+
         except Exception as e:
-            logger.exception(e)
+            self.__log.error("Failed to form request - %s", str(e))
+
+    def __form_multipart_files(self, data: str) -> list:
+        files = []
+        try:
+            json_data = json.loads(data)
+            if not isinstance(json_data, dict):
+                self.__log.warning(
+                    "Multipart data is not a dict: %r", data
+                )
+                return files
+
+            for field_name, field_value in json_data.items():
+                files.append((field_name, (None, str(field_value))))
+            return files
+        except json.JSONDecodeError as err:
+            self.__log.error(
+                "Failed to build multipart files. Check that HTTP method is not "
+                "GET and the payload is valid JSON. Error: %s",
+                err,
+            )
+            return files
+
+    def __send_request(self, request_dict, converter_queue, with_queue=True):
+        self.__log.debug("Received data from ThingsBoard %s", request_dict)
+        params = self.__form_request_from_content_type(request_dict)
+        if not params:
+            self.__log.error("Cannot form request from given configuration. %s", json.dumps(request_dict))
+            return None
+        url = params.get("url", "")
+        response = None
+        data_to_storage = []
+        try:
+            if "data" in params and isinstance(params["data"], str):
+                params["data"] = params["data"].encode("utf-8")
+            self.__log.debug("Sending request to URL: %s with params %s", url, params)
+            response = request_dict["request"](**params)
+
+        except Timeout:
+            self.__log.error("Timeout error on request %s.", url)
+            data_to_storage.append({"error": "Timeout", "code": 408})
+        except RequestException as e:
+            self.__log.error("Cannot connect to %s. Request exception.", url)
+            data_to_storage.append({"error": str(e)})
+            self.__log.debug(e)
+        except ConnectionError:
+            self.__log.error("Cannot connect to %s. Connection error.", url)
+            data_to_storage.append({"error": f"Cannot connect to target url: {url}"})
+
+        if response and response.ok:
+            try:
+                response_value = response.json()
+                data_to_storage.append(response_value)
+                self.__log.debug("Obtained the response from the server %s with status %s", response_value, response.status_code)
+            except UnicodeDecodeError:
+                data_to_storage.append(response.content)
+            except JSONDecodeError:
+                data_to_storage.append(response.content)
+
+            if len(data_to_storage) == 3 and with_queue and not converter_queue.full():
+                converter_queue.put(data_to_storage)
+                self.statistics["MessagesReceived"] = self.statistics["MessagesReceived"] + 1
+        else:
+            if response is not None:
+                self.__log.error("Request to URL: %s finished with code: %i. Cat information: http://http.cat/%i",
+                             url,
+                             response.status_code,
+                             response.status_code)
+                self.__log.debug("Response: %r", response.text)
+                data_to_storage.append({"error": response.reason, "code": response.status_code})
+
+            if with_queue:
+                converter_queue.put(data_to_storage)
+
+            self.statistics["MessagesReceived"] = self.statistics["MessagesReceived"] + 1
+
+        if not with_queue:
+            return data_to_storage
 
 
 class BaseDataHandler:
     responses_queue = Queue()
     response_attribute_request = Queue()
 
-    def __init__(self, send_to_storage, name, id, endpoint, logger, provider=None):
-        self.log = logger
+    def __init__(self, send_to_storage, name, id, endpoint, converter_logger, connector_logger, provider=None):
+        self.converter_logger = converter_logger
+        self.connector_logger = connector_logger
         self.send_to_storage = send_to_storage
         self.connector_id = id
         self.__name = name
@@ -459,28 +580,78 @@ class BaseDataHandler:
     def endpoint(self):
         return self.__endpoint
 
-    @staticmethod
-    async def _convert_data_from_request(request):
-        if request.method == 'GET':
-            params = request.query
+    async def _handle_multipart_data(self, request, result):
+        reader = await request.multipart()
+        async for part in reader:
+            if part.filename:
+                self.connector_logger.info(
+                    "File uploads via multipart/form-data are not supported. "
+                    "Field %s, filename %s will be ignored",
+                    part.name,
+                    part.filename,
+                )
+                await part.read(decode=False)
+                continue
 
-            return dict(params)
-        else:
+            field_name = part.name
+            content_type = part.headers.get(hdrs.CONTENT_TYPE, "")
+
+            if content_type.startswith("application/json"):
+                try:
+                    value = await part.json()
+                except json.decoder.JSONDecodeError as exc:
+                    self.connector_logger.warning(
+                        "Failed to parse JSON multipart field %s: %s",
+                        field_name,
+                        exc,
+                    )
+                    value = await part.text()
+                except Exception as exc:
+                    self.connector_logger.warning(
+                        "Unexpected error during JSON parse for field %s: %s",
+                        field_name,
+                        exc,
+                    )
+                    value = await part.text()
+            else:
+                value = await part.text()
+
+            result[field_name] = value
+
+        return result
+
+    async def _convert_data_from_request(self, request):
+        result = dict(request.match_info)
+        result.update(dict(request.query))
+
+        if request.content_type == "multipart/form-data":
+            multipart_result = await self._handle_multipart_data(request, result)
+            return multipart_result
+
+        if request.method != "GET":
             try:
                 json_data = await request.json()
+                if isinstance(json_data, list):
+                    json_data = json_data[0]
             except json.decoder.JSONDecodeError:
                 data = await request.post()
                 if len(data):
                     json_data = dict(data)
                 else:
-                    json_data = await request.text()
+                    json_data = {"text": await request.text()}
 
-            return json_data
+            result.update(json_data)
+
+        return result
 
     @staticmethod
     def modify_data_for_remote_response(data, modify):
         if modify:
-            data['attributes'].append({'responseExpected': True})
+            if isinstance(data, ConvertedData):
+                response_expected_key = TBUtility.convert_key_to_datapoint_key('responseExpected', None, {}, None)
+                data.attributes.update({response_expected_key: True})
+            else:
+                data['attributes'].append({'responseExpected': True})
 
     def get_response(self):
         if self.response_expected:
@@ -568,18 +739,22 @@ class AnonymousDataHandler(BaseDataHandler):
             return result
 
         try:
-            self.log.info("CONVERTER CONFIG: %r", endpoint_config['converter'])
-            converter = self.endpoint['converter'](endpoint_config['converter'], self.log)
-            converted_data = converter.convert(config=endpoint_config['converter'], data=data)
+            self.connector_logger.info("CONVERTER CONFIG: %r", endpoint_config['converter'])
+            converted_config = endpoint_config['converter']
+            converted_config.update({'reportStrategy': endpoint_config.get('reportStrategy')})
+            converter = self.endpoint['converter'](converted_config, self.converter_logger)
+            converted_data: ConvertedData = converter.convert(config=endpoint_config['converter'], data=data)
 
             self.modify_data_for_remote_response(converted_data, self.response_expected)
 
-            self.send_to_storage(self.name, self.connector_id, converted_data)
-            self.log.info("CONVERTED_DATA: %r", converted_data)
-
+            if (converted_data and
+                    (converted_data.attributes_datapoints_count > 0 or
+                     converted_data.telemetry_datapoints_count > 0)):
+                self.send_to_storage(self.name, self.connector_id, converted_data)
+                self.connector_logger.info("CONVERTED_DATA: %r", converted_data)
             return self.get_response()
         except Exception as e:
-            self.log.exception("Error while post to anonymous handler: %s", e)
+            self.connector_logger.exception("Error while post to anonymous handler: %s", e)
             return web.Response(body=str(self.success_response) if self.success_response else None, status=500)
 
 
@@ -617,18 +792,28 @@ class BasicDataHandler(BaseDataHandler):
                 return result
 
             try:
-                self.log.info("CONVERTER CONFIG: %r", endpoint_config['converter'])
-                converter = self.endpoint['converter'](endpoint_config['converter'], self.log)
-                converted_data = converter.convert(config=endpoint_config['converter'], data=data)
+                StatisticsService.count_connector_message(self.name, stat_parameter_name='connectorMsgsReceived')
+                StatisticsService.count_connector_bytes(self.name, data, stat_parameter_name='connectorBytesReceived')
+
+                self.connector_logger.info("CONVERTER CONFIG: %r", endpoint_config['converter'])
+
+                converter_config = endpoint_config['converter']
+                converter_config.update({'reportStrategy': endpoint_config.get('reportStrategy')})
+
+                converter = self.endpoint['converter'](converter_config, self.converter_logger)
+                converted_data: ConvertedData = converter.convert(config=endpoint_config['converter'], data=data)
 
                 self.modify_data_for_remote_response(converted_data, self.response_expected)
 
-                self.send_to_storage(self.name, self.connector_id, converted_data)
-                self.log.info("CONVERTED_DATA: %r", converted_data)
+                if (converted_data and
+                        (converted_data.attributes_datapoints_count > 0 or
+                         converted_data.telemetry_datapoints_count > 0)):
+                    self.send_to_storage(self.name, self.connector_id, converted_data)
+                    self.connector_logger.info("CONVERTED_DATA: %r", converted_data)
 
                 return self.get_response()
             except Exception as e:
-                self.log.exception("Error while post to basic handler: %s", e)
+                self.connector_logger.exception("Error while post to basic handler: %s", e)
                 return web.Response(body=str(self.unsuccessful_response) if self.unsuccessful_response else None,
                                     status=500)
 
