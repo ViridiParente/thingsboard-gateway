@@ -75,6 +75,7 @@ class Master:
         async with self.lock:
             if not self.__client.connected:
                 await self.__client.connect()
+                # TODO(Drew Young): RS485
 
     @with_lock_for_serial
     async def close(self):

@@ -278,6 +278,7 @@ class BytesModbusUplinkConverter(ModbusConverter):
         decoded = None
 
         if lower_type in ['bit', 'bits']:
+            # TODO(Drew Young): there may be an endianness problem here
             decoded = decoder_functions[lower_type]()
             decoded_lastbyte = decoder_functions[lower_type]()
             decoded += decoded_lastbyte
