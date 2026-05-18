@@ -46,7 +46,7 @@ try:
         installation_required = True
 
     from serial import SerialException  # noqa
-    from serial_asyncio import create_serial_connection  # noqa
+    from serial_asyncio_fast import create_serial_connection  # noqa
 
 except ImportError:
     installation_required = True
