@@ -95,7 +95,7 @@ class Slave:
         self.bytesize = config.get(BYTESIZE_PARAMETER, PymodbusDefaults.Bytesize)
         self.parity = config.get(PARITY_PARAMETER, PymodbusDefaults.Parity)
         self.rs485 = config.get(RS485_PARAMETER, False)
-        self.rtscts = config.get(RTSCTS_PARAMETERS, False)
+        self.rtscts = config.get(RTSCTS_PARAMETER, False)
         self.dsrdtr = config.get(DSRDTR_PARAMETER, False)
         self.xonxoff = config.get(XONXOFF_PARAMETER, False)
         self.repack = config.get(REPACK_PARAMETER, False)
