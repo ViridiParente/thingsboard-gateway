@@ -15,6 +15,8 @@
 from time import monotonic
 from asyncio import Lock
 
+import serial.rs485
+
 from pymodbus.client import AsyncModbusSerialClient
 from pymodbus.client.tcp import AsyncModbusTcpClient
 from pymodbus.client.udp import AsyncModbusUdpClient
@@ -75,7 +77,21 @@ class Master:
         async with self.lock:
             if not self.__client.connected:
                 await self.__client.connect()
-                # TODO(Drew Young): RS485
+                self.__apply_serial_flow_control()
+
+    def __apply_serial_flow_control(self):
+        """Apply RS485/flow-control options to the underlying serial port.
+
+        pymodbus 3.x does not forward these options to pyserial, so they have to
+        be set on the opened port after connecting.
+        """
+        options = getattr(self.__client, 'serial_flow_control', None)
+        if not options or self.__client.socket is None:
+            return
+        if options.get('rs485'):
+            self.__client.socket.rs485_mode = serial.rs485.RS485Settings()
+        for attr in ('rtscts', 'dsrdtr', 'xonxoff'):
+            setattr(self.__client.socket, attr, options[attr])
 
     @with_lock_for_serial
     async def close(self):
@@ -174,6 +190,12 @@ class Master:
                                              parity=config.parity,
                                              handle_local_echo=config.handle_local_echo,
                                              framer=framer)
+            master.serial_flow_control = {
+                'rs485': config.rs485,
+                'rtscts': config.rtscts,
+                'dsrdtr': config.dsrdtr,
+                'xonxoff': config.xonxoff,
+            }
         else:
             raise Exception("Invalid Modbus transport type.")
 
