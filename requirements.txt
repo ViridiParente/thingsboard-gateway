@@ -1,5 +1,5 @@
 setuptools
-packaging==23.1
+packaging
 jsonpath-rw
 regex
 pip

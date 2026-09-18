@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 #     Copyright 2026. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,6 +62,8 @@ setup(
               'thingsboard_gateway.connectors.knx', 'thingsboard_gateway.extensions.knx',
               'thingsboard_gateway.connectors.knx.entities',
               'thingsboard_gateway.connectors.isotp', 'thingsboard_gateway.connectors.j1939',
+              'thingsboard_gateway.connectors.s7', 'thingsboard_gateway.connectors.s7.entities',
+              'thingsboard_gateway.extensions.s7',
               'thingsboard_gateway.tb_utility', 'thingsboard_gateway.extensions',
               'thingsboard_gateway.extensions.serial'
               ],
@@ -85,7 +85,7 @@ setup(
         'cachetools',
         'tb-paho-mqtt-client>=2.1.2',
         'tb-mqtt-client==1.13.13',
-        'packaging==23.1',
+        'packaging',
         'service-identity',
         'psutil',
         'PySocks',

@@ -12,4 +12,12 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
-VERSION = "3.8.5"
+from abc import abstractmethod
+
+from thingsboard_gateway.connectors.converter import Converter
+
+
+class S7Converter(Converter):
+    @abstractmethod
+    def convert(self, data):
+        pass

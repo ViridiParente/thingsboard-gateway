@@ -18,6 +18,8 @@ from thingsboard_gateway.gateway.entities.report_strategy_config import ReportSt
 from thingsboard_gateway.gateway.statistics.statistics_service import StatisticsService
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 
+from xknx.dpt.dpt_1 import Bool as knx_Bool
+
 
 class KNXUplinkConverter(KNXConverter):
     def __init__(self, config, logger):
@@ -31,13 +33,23 @@ class KNXUplinkConverter(KNXConverter):
 
         converted_data = ConvertedData(device_name=device_name, device_type=device_type)
 
+
         device_report_strategy = self._get_device_report_strategy(self.__config.get('reportStrategy'),
                                                                   device_name)
 
         for section in ('attributes', 'timeseries'):
             for config in self.__config.get(section, []):
                 try:
-                    converted_value = data.get(config.get('groupAddress'))['response']
+                    group_address = config.get('groupAddress')
+                    response_entry = data.get(group_address)
+                    if response_entry is None:
+                        self.__log.trace('No data received yet for group address %s, skipping', group_address)
+                        continue
+
+                    converted_value = response_entry['response']
+                    if isinstance(converted_value, knx_Bool):
+                        converted_value = converted_value.value
+
                     if converted_value is not None:
                         datapoint_key = TBUtility.convert_key_to_datapoint_key(config['key'],
                                                                                device_report_strategy,

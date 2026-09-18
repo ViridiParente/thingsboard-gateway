@@ -81,4 +81,8 @@ categories:
     labels:
       - 'Connector:XMPP'
 
+  - title: '🐛 S7 connector:'
+    labels:
+      - 'Connector:S7'
+
   - title: '🐛 Other:'

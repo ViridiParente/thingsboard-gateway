@@ -127,7 +127,7 @@ class Slave:
 
         self.downlink_converter = self.__load_downlink_converter(config)
 
-        self.uplink_converter_config = BytesUplinkConverterConfig(**config)
+        self.uplink_converter_config = BytesUplinkConverterConfig(self._log, **config)
         self.uplink_converter = self.__load_uplink_converter(config)
 
         self.__master: 'Master' = None
