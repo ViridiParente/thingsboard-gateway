@@ -288,7 +288,10 @@ class BytesModbusUplinkConverter(ModbusConverter):
                 decoded = decoded[::-1]
                 decoded_lastbyte = decoded_lastbyte[::-1]
             decoded += decoded_lastbyte
-            decoded = decoded[:objects_count]
+            # A 'bit' index addresses the full 2-byte register; slicing to
+            # objects_count first would clamp the index to a single element.
+            if configuration.get('bit') is None:
+                decoded = decoded[:objects_count]
 
         elif lower_type == "string":
             decoded = decoder_functions[lower_type](objects_count * 2)
