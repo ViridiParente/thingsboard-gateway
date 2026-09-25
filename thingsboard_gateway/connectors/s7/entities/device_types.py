@@ -12,4 +12,12 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
-VERSION = "3.8.5"
+from enum import Enum
+
+
+class DeviceType(Enum):
+    PCL = 'PLC'
+    LOGO = 'LOGO'
+
+
+DeviceTypes = (DeviceType.LOGO.value, DeviceType.PCL.value)

@@ -58,7 +58,7 @@ class ModbusConnectorTestsBase(BaseTest):
             with open(self.CONFIG_PATH + config_file_name, 'r', encoding="UTF-8") as file:
                 self.config = load(file)
                 self.config['master']['slaves'][0]['uplink_converter'] = BytesModbusUplinkConverter(
-                    BytesUplinkConverterConfig(**{**self.config['master']['slaves'][0], 'deviceName': 'Test'}),
+                    BytesUplinkConverterConfig(self.tb_logger, **{**self.config['master']['slaves'][0], 'deviceName': 'Test'}),
                     logger=self.tb_logger)
                 self.config['master']['slaves'][0]['downlink_converter'] = BytesModbusDownlinkConverter(
                     {**self.config['master']['slaves'][0], 'deviceName': 'Test'}, logger=self.tb_logger)

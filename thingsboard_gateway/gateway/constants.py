@@ -144,6 +144,7 @@ DEFAULT_CONNECTORS = {
     "knx": "KNXConnector",
     "isotp": "IsotpConnector",
     "j1939": "J1939Connector",
+    "s7": "S7Connector",
 }
 
 DEFAULT_STATISTIC = {

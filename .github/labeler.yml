@@ -103,3 +103,9 @@ Connector:XMPP:
       - any-glob-to-any-file:
           - thingsboard_gateway/connectors/xmpp/**
           - thingsboard_gateway/extensions/xmpp/**
+
+Connector:S7:
+    - changed-files:
+        - any-glob-to-any-file:
+            - thingsboard_gateway/connectors/s7/**
+            - thingsboard_gateway/extensions/s7/**

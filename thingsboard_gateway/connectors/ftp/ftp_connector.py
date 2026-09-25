@@ -439,8 +439,9 @@ class FTPConnector(Connector, Thread):
                 if connector_type == self._connector_type:
                     value_expression = content['data']['params']['valueExpression']
                     converted_data, success_sent = self.__process_rpc(rpc_method_name, value_expression)
-                    self.__send_rpc_reply({}, content, converted_data, success_sent)
-                    return
+                    self.__log.info("Successfully sent RPC request to FTP for %s rpc method", rpc_method_name)
+                    result = converted_data if isinstance(converted_data, dict) else {'result': converted_data}
+                    return {'success': bool(success_sent), **result}
             except ValueError:
                 pass
 
@@ -483,7 +484,7 @@ class FTPConnector(Connector, Thread):
 
         except Exception as e:
             self.__log.error(
-                "Failed to perform incoming server side RPC for content %s and rpc method due to %r", str(e))
+                "Failed to perform incoming server side RPC for content %s and rpc method due to %r", content, str(e))
             self.__log.debug("Error:", exc_info=e)
 
     def __process_rpc(self, method, value_expression):
@@ -501,7 +502,7 @@ class FTPConnector(Connector, Thread):
                     ftp.storbinary('STOR ' + arr[0], io_stream)
                     io_stream.close()
                     success_sent = True
-                    converted_data = {"result": {"value": arr[1]}} if len(arr[1]) < 80 else {"result": True}
+                    converted_data = {"result": arr[1]} if len(arr[1]) < 80 else {"result": True}
                     self.__log.info("The value %s is written to %s", arr[1], arr[0])
                 except Exception as e:
                     self.__log.error("Can not process for method write due to %r", str(e))
@@ -511,6 +512,7 @@ class FTPConnector(Connector, Thread):
                 handle_stream = io.BytesIO()
                 ftp.retrbinary('RETR ' + value_expression, handle_stream.write)
                 converted_data = str(handle_stream.getvalue(), 'UTF-8')
+                success_sent = True
                 handle_stream.close()
 
             return converted_data, success_sent

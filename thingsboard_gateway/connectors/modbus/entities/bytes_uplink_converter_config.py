@@ -16,7 +16,8 @@ from pymodbus.constants import Endian
 
 
 class BytesUplinkConverterConfig:
-    def __init__(self, **kwargs):
+    def __init__(self, logger, **kwargs):
+        self.__log = logger
         self.report_strategy = kwargs.get('reportStrategy')
         self.device_name = kwargs['deviceName']
         self.device_type = kwargs.get('deviceType', 'default')
@@ -26,5 +27,23 @@ class BytesUplinkConverterConfig:
         self.attributes = kwargs.get('attributes', [])
         self.unit_id = kwargs['unitId']
 
+        self._validate_config()
+
     def is_readable(self):
         return len(self.telemetry) > 0 or len(self.attributes) > 0
+
+    def _validate_config(self):
+        self._validate_telemetry_and_attrs_config()
+
+    def _validate_telemetry_and_attrs_config(self):
+        for conf_section in (self.telemetry, self.attributes):
+            for datapoint in conf_section:
+                self._validate_datapoint_config(datapoint)
+
+    def _validate_datapoint_config(self, datapoint):
+        max_datapoint_per_request = datapoint.get('maxRegistersPerRequest', 16)
+
+        if not isinstance(max_datapoint_per_request, int) or max_datapoint_per_request <= 0:
+            self.__log.warning(f"Invalid maxRegistersPerRequest value for datapoint {datapoint.get('tag')}. "
+                               f"Setting to default value of 16.")
+            datapoint['maxRegistersPerRequest'] = 16
