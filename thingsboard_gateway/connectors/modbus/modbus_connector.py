@@ -70,7 +70,6 @@ from pymodbus.pdu import ModbusPDU  # noqa
 from pymodbus.pdu.bit_message import WriteMultipleCoilsResponse, WriteSingleCoilResponse  # noqa: E402
 from pymodbus.constants import Endian  # noqa: E402
 from pymodbus.pdu.register_message import WriteMultipleRegistersResponse, WriteSingleRegisterResponse  # noqa: E402
-from serial.rs485 import RS485Settings
 
 
 class AsyncModbusConnector(Connector, Thread):
